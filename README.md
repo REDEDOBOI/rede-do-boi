@@ -7,6 +7,11 @@ App do pecuarista (mercado de gado + clube de vantagens) para Apuí e Santo Ant�
 - **Comprador (administrador)**: entra com telefone e senha, vê todos os lançamentos, faz ofertas, marca a situação
   (em negociação, visita técnica, negócio fechado), relatório com planilha e PDF, banners da tela inicial, vicinais e produtores.
 
+- **Revenda de lotes**: o administrador separa lotes do gado comprado (fotos, vídeos, descrição, peso, valor da @),
+  cadastra os compradores e manda o link `comprador.html`. O comprador entra com o telefone, vê os lotes, confirma a
+  compra (o lote fica reservado para ele), pergunta ou chama no WhatsApp. Valor pago, despesas, valor vendido e lucro
+  só os administradores veem; relatório por lote e por comprador.
+
 ## Como é feito
 
 - `public/`: o app (PWA, HTML + JavaScript, sem etapa de build). Pode ser hospedado em qualquer site estático
@@ -17,7 +22,8 @@ App do pecuarista (mercado de gado + clube de vantagens) para Apuí e Santo Ant�
   - `js/store.js`: dados no aparelho (IndexedDB): cache, fila de envio e fotos ainda não enviadas.
   - `sw.js`: guarda o app no aparelho para abrir sem internet.
 - `supabase/`: banco de dados (PostgreSQL no Supabase).
-  - `instalar.sql`: tudo junto, para colar no SQL Editor do Supabase (gerado de `schema.sql`, `storage.sql` e `seed.sql`).
+  - `instalar.sql`: tudo junto, para colar no SQL Editor do Supabase (gerado de `schema.sql`, `storage.sql`, das atualizações e de `seed.sql`).
+  - `atualizacao-02-parceiros.sql`, `atualizacao-03-revenda.sql`: para quem já instalou antes, rodar uma vez no SQL Editor.
   - As regras de segurança ficam no banco (RLS + gatilhos): o produtor só vê os próprios lançamentos, não muda
     status nem valor fechado; só administradores com senha veem tudo.
 

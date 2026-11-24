@@ -282,3 +282,14 @@ body.com-faixa #app{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 tr.tot td{font-weight:700;background:#eef3ea}
 .grupo{gap:8px}.grupo .tbl{margin-top:2px}
 @media print{.grupo{break-inside:avoid}.chips{display:none!important}}
+
+/* ---------- revenda de lotes ---------- */
+.pl-disponivel{background:#e4f2dc;color:var(--pasto)} .pl-reservado{background:var(--ouro);color:var(--terra)}
+.pl-vendido{background:var(--pasto);color:#fff} .pl-no_pasto{background:#e7defa;color:#5a2ea6}
+.pl-entregue{background:#dde9f7;color:var(--info)} .pl-cancelado{background:#eee;color:#666}
+.lote-c .lc-img{position:relative;display:block;width:100%;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#e9eee4}
+.lote-c .lc-img img,.lote-c .lc-img video{width:100%;height:100%;object-fit:cover;display:block}
+.lote-c .lc-img .play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:28px;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.descr{margin:0;line-height:1.5;font-size:14px}
+.pos{color:var(--pasto)} .neg{color:var(--alerta)}
+.kv.fin{background:var(--card);border:1px solid var(--linha);border-radius:12px;padding:10px 12px}
