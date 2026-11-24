@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rede do Boi</title>
+<meta name="description" content="Negócios e vantagens para o pecuarista.">
+<meta name="theme-color" content="#0f4d23">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-64.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Rede do Boi">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="phone"><main id="app" aria-live="polite"><div class="login"><img src="icons/logo.jpg" alt="Rede do Boi"><p class="slogan">Carregando...</p></div></main>
+<div class="toast" id="toast" role="status" hidden></div><div id="modal"></div><div id="viewer" role="dialog" aria-label="Foto ampliada" hidden></div></div>
+<noscript>Ative o JavaScript para usar o Rede do Boi.</noscript>
+<script src="vendor/supabase.js"></script>
+<script src="js/config.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

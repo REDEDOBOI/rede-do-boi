@@ -1,0 +1,12 @@
+const { chromium, devices } = require('playwright');
+(async () => { const b = await chromium.launch(); const ctx = await b.newContext({ ...devices['Pixel 7'] }); const p = await ctx.newPage();
+ p.on('console', m => console.log('CONSOLE', m.type(), m.text().slice(0,400)));
+ p.on('response', r => { if (r.status() >= 400) console.log('HTTP', r.status(), r.url()); });
+ await p.goto('http://localhost:8081/'); await p.waitForSelector('#f-login');
+ await p.fill('#l-fone', '(97) 98111-2233'); await p.click('#f-login button'); await p.waitForSelector('.home-grid', { timeout: 15000 });
+ await p.click('[data-a=lancar]'); await p.click('[data-tipo=venda]'); await p.click('[data-cat=boi_gordo]');
+ await p.fill('#d-qtd', '30'); await p.fill('#d-peso', '18'); await p.fill('#d-valor', '315');
+ await p.setInputFiles('#d-file', 'ICON.jpg'); await p.waitForSelector('#d-media img');
+ await p.click('#f-lanc button[type=submit]'); await p.waitForTimeout(5000);
+ console.log(await p.evaluate(() => JSON.stringify(window.__rdb.E.fila)));
+ await b.close(); })();
