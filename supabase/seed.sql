@@ -53,3 +53,6 @@ insert into public.vicinais(nome) values
   ('União'),
   ('Lima 10')
 on conflict do nothing;
+
+-- ---------- Administradores (pedido do Ronaldo em 24/11/2026) ----------
+insert into public.admins_previstos(fone) values ('5569984899474'), ('5569984495915') on conflict do nothing;

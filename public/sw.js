@@ -1,5 +1,5 @@
 // Service worker: guarda o app no aparelho para abrir sem internet.
-const VERSAO = 'rdb-v1';
+const VERSAO = 'rdb-v2';
 const APP = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/api.js', 'js/store.js', 'js/config.js', 'vendor/supabase.js',
   'manifest.webmanifest', 'icons/logo.jpg', 'icons/icon-64.png', 'icons/icon-192.png', 'icons/sem-foto.svg',
   'fonts/archivo-latin-800-italic.woff2', 'fonts/archivo-latin-800-normal.woff2', 'fonts/archivo-latin-900-italic.woff2',

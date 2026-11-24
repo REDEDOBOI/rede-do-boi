@@ -24,6 +24,10 @@ create table if not exists public.perfis (
 );
 alter table public.perfis add column if not exists senha_definida boolean not null default false;
 
+-- Telefones que viram administrador automaticamente ao se cadastrar (ninguém lê pelo app)
+create table if not exists public.admins_previstos (fone text primary key);
+alter table public.admins_previstos enable row level security;
+
 create or replace function public.eh_admin() returns boolean
 language sql stable security definer set search_path = public as $$
   select coalesce((select admin and senha_definida from public.perfis where id = auth.uid()), false)
@@ -34,8 +38,12 @@ create or replace function public.perfis_guard() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then return new; end if; -- SQL Editor / painel do Supabase
+  -- o telefone é o da conta (login); não pode ser trocado por outro
+  new.fone := coalesce(split_part((select email from auth.users where id = new.id), '@', 1), new.fone);
   if tg_op = 'INSERT' then
-    if not public.eh_admin() then new.admin := false; end if;
+    if not public.eh_admin() then
+      new.admin := exists (select 1 from public.admins_previstos where fone = new.fone);
+    end if;
     new.senha_definida := false;
     new.criado_em := now();
   else
@@ -45,8 +53,6 @@ begin
     if old.id <> auth.uid() then new.senha_definida := old.senha_definida;
     else new.senha_definida := old.senha_definida or new.senha_definida; end if;
   end if;
-  -- o telefone é o da conta (login); não pode ser trocado por outro
-  new.fone := coalesce(split_part((select email from auth.users where id = new.id), '@', 1), new.fone);
   return new;
 end $$;
 drop trigger if exists perfis_guard on public.perfis;
@@ -398,3 +404,6 @@ insert into public.vicinais(nome) values
   ('União'),
   ('Lima 10')
 on conflict do nothing;
+
+-- ---------- Administradores (pedido do Ronaldo em 24/11/2026) ----------
+insert into public.admins_previstos(fone) values ('5569984899474'), ('5569984495915') on conflict do nothing;

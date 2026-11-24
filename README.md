@@ -28,9 +28,8 @@ App do pecuarista (mercado de gado + clube de vantagens) para Apuí e Santo Ant�
 3. Authentication > Sign In / Providers > Email: **desligar "Confirm email"** (o login é só pelo telefone).
 4. Project Settings > API: copiar *Project URL* e a chave *anon/publishable* para `public/js/config.js`.
 5. Publicar a pasta `public/` (GitHub Pages: Settings > Pages > Deploy from branch, pasta `/public` via workflow incluído).
-6. Primeiro administrador: entrar no app com o telefone e fazer o cadastro. Depois, no SQL Editor:
-   `update perfis set admin = true where fone = '5597XXXXXXXXX';`
-   Ao abrir o app de novo, ele pede para criar a senha. Os próximos administradores podem ser criados pelo próprio app
+6. Administradores: os telefones da tabela `admins_previstos` (em `seed.sql`) viram administrador ao se cadastrar,
+   e o app pede para criar a senha. Para outro, no SQL Editor: `update perfis set admin = true where fone = '55DDXXXXXXXXX';` Os próximos administradores podem ser criados pelo próprio app
    (Painel > Produtores e administradores).
 
 ## Testar localmente
