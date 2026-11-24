@@ -511,6 +511,8 @@ TELAS.admLista = () => {
   <button class="ghost red" data-a="sair">Sair</button></div></div>`;
 };
 
+// Mensagem que já vem escrita abaixo da oferta (o administrador pode mudar antes de enviar)
+const mensagemPadraoOferta = u => `Olá ${((u && u.nome) || '').trim().split(/\s+/)[0] || 'produtor'}, temos interessados no seu rebanho, caso aceite a proposta podemos agendar uma visita.`;
 TELAS.admLote = id => {
   const l = E.adm.lancs.find(x => x.id === id);
   if (!l) return topo('Lançamento') + '<div class="empty">Lançamento não encontrado.</div>';
@@ -528,7 +530,7 @@ TELAS.admLote = id => {
   <h2 class="sec">Histórico</h2>${conversa(l, 'adm')}
   ${l.excluido_em ? '<p class="note">O produtor excluiu este lançamento. Ele continua no relatório.</p>' : `<h2 class="sec">Fazer oferta ou mandar mensagem</h2>
   <form id="f-of"><label for="o-val">Oferta por @ (R$) <span class="opt">(opcional)</span><input id="o-val" type="number" inputmode="decimal" step="0.01" placeholder="Ex.: ${Math.max(0, (Number(l.valor) || 0) - 5)}"></label>
-   <label for="o-txt">Mensagem<textarea id="o-txt" rows="3" placeholder="Escreva para o produtor"></textarea></label>
+   <label for="o-txt">Mensagem<textarea id="o-txt" rows="4" placeholder="Escreva para o produtor">${l.tipo === 'venda' ? esc(mensagemPadraoOferta(u)) : ''}</textarea></label>
    <button class="cta green" type="submit">Enviar ao produtor</button></form>`}</div>`;
 };
 
