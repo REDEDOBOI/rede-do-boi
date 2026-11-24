@@ -29,7 +29,7 @@ const waLink = (fone, texto) => `https://wa.me/${soDigitos(fone)}${texto ? '?tex
 
 // ---------- estado ----------
 const E = {
-  usuario: null, perfil: null, vicinais: [], lancs: [], banners: [], interesses: [],
+  usuario: null, perfil: null, vicinais: [], lancs: [], banners: [], interesses: [], parceiros: [], vantagens: [],
   adm: { lancs: [], banners: [], sugestoes: [], perfis: [] },
   fila: [], online: navigator.onLine, visao: 'prod', filtroAdm: 'todos', carregado: false,
 };
@@ -39,12 +39,12 @@ const ehAdmin = () => !!(E.perfil && E.perfil.admin && E.perfil.senha_definida);
 
 async function salvarCache() {
   if (!E.usuario) return;
-  const { perfil, vicinais, lancs, banners, interesses, adm } = E;
-  try { await kv.set('cache:' + E.usuario.id, { perfil, vicinais, lancs, banners, interesses, adm, em: Date.now() }); } catch (e) {}
+  const { perfil, vicinais, lancs, banners, interesses, adm, parceiros, vantagens } = E;
+  try { await kv.set('cache:' + E.usuario.id, { perfil, vicinais, lancs, banners, interesses, adm, parceiros, vantagens, em: Date.now() }); } catch (e) {}
 }
 async function lerCache() {
   const c = await kv.get('cache:' + E.usuario.id).catch(() => null);
-  if (c) Object.assign(E, { perfil: c.perfil, vicinais: c.vicinais || [], lancs: c.lancs || [], banners: c.banners || [], interesses: c.interesses || [], adm: c.adm || E.adm });
+  if (c) Object.assign(E, { perfil: c.perfil, vicinais: c.vicinais || [], lancs: c.lancs || [], banners: c.banners || [], interesses: c.interesses || [], adm: c.adm || E.adm, parceiros: c.parceiros || [], vantagens: c.vantagens || [] });
   return !!c;
 }
 
@@ -150,8 +150,9 @@ async function atualizar() {
       const perfil = await api.perfil();
       E.perfil = perfil;
       if (!perfil) { salvarCache(); return; }
-      const [vic, lancs, bans, ints] = await Promise.all([api.vicinais(), api.meusLancamentos(), api.banners(), api.meusInteresses()]);
-      Object.assign(E, { vicinais: vic, lancs, banners: bans, interesses: ints });
+      const [vic, lancs, bans, ints, parcs, vants] = await Promise.all([api.vicinais(), api.meusLancamentos(), api.banners(), api.meusInteresses(),
+        api.parceiros().catch(() => E.parceiros), api.vantagens().catch(() => E.vantagens)]);
+      Object.assign(E, { vicinais: vic, lancs, banners: bans, interesses: ints, parceiros: parcs, vantagens: vants });
       if (ehAdmin()) {
         const [al, ab, sg, pf] = await Promise.all([api.todosLancamentos(), api.bannersAdmin(), api.sugestoes(), api.perfis()]);
         E.adm = { lancs: al, banners: ab, sugestoes: sg, perfis: pf };
@@ -227,7 +228,7 @@ function pintar(topo) {
 }
 app.addEventListener('input', e => { if (e.target.id && e.target.type !== 'file') e.target.dataset.sujo = 1; });
 const limparDigitado = () => app.querySelectorAll('[data-sujo]').forEach(e => delete e.dataset.sujo);
-const FORMULARIOS = new Set(['lancar', 'cadastro', 'admBanner', 'login', 'senha', 'criarSenha']);
+const FORMULARIOS = new Set(['lancar', 'cadastro', 'admBanner', 'admVantagem', 'admParceiro', 'login', 'senha', 'criarSenha']);
 function barraRedeHtml() {
   const q = E.fila.filter(i => E.usuario && i.uid === E.usuario.id).length;
   if (!E.online) return `<div class="net" id="net">Sem internet. ${E.visao === 'adm' ? 'Mostrando os dados da última conexão.' : q ? `${q} envio(s) guardado(s) no aparelho, vão sozinhos quando conectar.` : 'Você pode lançar normalmente.'}</div>`;
@@ -475,9 +476,103 @@ function botaoPermitirAvisos() {
   return `<button class="ghost" data-a="permitirAvisos" style="width:100%">🔔 Receber avisos no celular</button>`;
 }
 
-TELAS.vantagens = () => `${topo('Clube de Vantagens')}<div class="body"><div class="empty">Em breve: descontos exclusivos para os produtores da Rede do Boi em lojas e serviços parceiros da região.</div>${WA ? `<a class="wa" href="${waLink(WA, 'Olá, quero saber do Clube de Vantagens da Rede do Boi')}" target="_blank" rel="noopener">Quero saber mais</a>` : ''}</div>`;
+const vantagemValida = v => v.ativo && (!v.ate || new Date(v.ate + 'T23:59') >= new Date());
+const parceiroDe = v => E.parceiros.find(p => p.id === v.parceiro_id);
+const imgOuIcone = (img, letra) => img ? `<img class="thumb" src="${esc(urlBanner(img))}" alt="" loading="lazy">` : `<span class="thumb ph" aria-hidden="true">${esc((letra || '?').slice(0, 1).toUpperCase())}</span>`;
+function cartaoVantagem(v, comParceiro = true) {
+  const p = parceiroDe(v);
+  return `<div class="item card-v">${v.img ? `<img class="capa" src="${esc(urlBanner(v.img))}" alt="" loading="lazy">` : ''}
+   <div class="row"><h3>${esc(v.titulo)}</h3>${v.desconto ? `<span class="selo-desc">${esc(v.desconto)}</span>` : ''}</div>
+   ${comParceiro && p ? `<button class="lnk" data-parc="${p.id}">${esc(p.nome)} ›</button>` : ''}
+   ${v.descr ? `<div class="meta">${esc(v.descr).replace(/\n/g, '<br>')}</div>` : ''}
+   ${v.ate ? `<div class="meta">Válida até <b>${new Date(v.ate + 'T12:00').toLocaleDateString('pt-BR')}</b></div>` : ''}
+   ${p && p.fone ? `<a class="wa" href="${waLink(p.fone, `Olá, sou produtor da Rede do Boi e quero usar a vantagem: ${v.titulo}`)}" target="_blank" rel="noopener">Usar vantagem pelo WhatsApp</a>` : ''}</div>`;
+}
+TELAS.vantagens = () => {
+  const vs = E.vantagens.filter(vantagemValida);
+  return `${topo('Clube de Vantagens')}<div class="body">
+  ${vs.length ? `<p class="meta">Descontos exclusivos para os produtores da Rede do Boi. Mostre o app ou chame o parceiro pelo WhatsApp.</p>${vs.map(v => cartaoVantagem(v)).join('')}`
+    : `<div class="empty">Em breve: descontos exclusivos para os produtores da Rede do Boi em lojas e serviços parceiros da região.</div>${WA ? `<a class="wa" href="${waLink(WA, 'Olá, quero saber do Clube de Vantagens da Rede do Boi')}" target="_blank" rel="noopener">Quero saber mais</a>` : ''}`}</div>`;
+};
 TELAS.ofertas = () => `${topo('Ofertas Especiais')}<div class="body">${bannersAtivos().length ? bannersAtivos().map(b => `<div>${bannerEl(b)}</div>`).join('') : '<div class="empty">Nenhuma oferta no momento. Volte em breve.</div>'}</div>`;
-TELAS.parceiros = () => `${topo('Nossos Parceiros')}<div class="body"><div class="empty">Em breve: a lista de parceiros da região (agropecuárias, veterinários, transportadores).</div>${WA ? `<a class="wa" href="${waLink(WA, 'Olá, quero ser parceiro da Rede do Boi')}" target="_blank" rel="noopener">Quero ser parceiro</a>` : ''}</div>`;
+TELAS.parceiros = () => {
+  const ps = E.parceiros.filter(p => p.ativo);
+  return `${topo('Nossos Parceiros')}<div class="body">
+  ${ps.length ? ps.map(p => { const n = E.vantagens.filter(v => v.parceiro_id === p.id && vantagemValida(v)).length;
+    return `<button class="item parc" data-parc="${p.id}">${imgOuIcone(p.img, p.nome)}<span class="parc-t"><h3>${esc(p.nome)}</h3>${p.categoria ? `<span class="meta">${esc(p.categoria)}${p.mun ? ' · ' + esc(p.mun) : ''}</span>` : ''}${p.oferece ? `<span class="meta">${esc(p.oferece)}</span>` : ''}${n ? `<span class="selo-desc">${n} vantagem${n > 1 ? 'ns' : ''}</span>` : ''}</span></button>`; }).join('')
+    : '<div class="empty">Em breve: a lista de parceiros da região (agropecuárias, veterinários, transportadores).</div>'}
+  ${WA ? `<a class="wa" href="${waLink(WA, 'Olá, quero ser parceiro da Rede do Boi')}" target="_blank" rel="noopener">Quero ser parceiro</a>` : ''}</div>`;
+};
+TELAS.parceiro = id => {
+  const p = E.parceiros.find(x => x.id === id);
+  if (!p) return topo('Parceiro') + '<div class="empty">Parceiro não encontrado.</div>';
+  const vs = E.vantagens.filter(v => v.parceiro_id === p.id && vantagemValida(v));
+  return `${topo(esc(p.nome))}<div class="body">
+  <div class="parc parc-top">${imgOuIcone(p.img, p.nome)}<span class="parc-t"><h3>${esc(p.nome)}</h3>${p.categoria ? `<span class="pill p-venda" style="align-self:flex-start">${esc(p.categoria)}</span>` : ''}</span></div>
+  ${p.oferece ? `<h2 class="sec">O que oferece</h2><p style="margin:0;line-height:1.5">${esc(p.oferece)}</p>` : ''}
+  ${p.descr ? `<p class="meta" style="font-size:14px;line-height:1.5;margin:0">${esc(p.descr).replace(/\n/g, '<br>')}</p>` : ''}
+  ${p.endereco || p.mun ? `<div class="meta">📍 ${esc([p.endereco, p.mun].filter(Boolean).join(' · '))}</div>` : ''}
+  ${p.fone ? `<a class="wa" href="${waLink(p.fone, 'Olá, sou produtor da Rede do Boi.')}" target="_blank" rel="noopener">Chamar no WhatsApp</a><div class="copy">${esc(foneBonito(p.fone))}</div>` : ''}
+  ${vs.length ? `<h2 class="sec">Vantagens para você</h2>${vs.map(v => cartaoVantagem(v, false)).join('')}` : ''}</div>`;
+};
+
+// ---------- administrador: vantagens e parceiros ----------
+TELAS.admVantagens = () => `${topo('Clube de Vantagens')}<div class="body">
+  <p class="note">As vantagens ativas aparecem para os produtores em Clube de Vantagens. Ligue cada uma a um parceiro para o produtor poder chamar no WhatsApp.</p>
+  <button class="cta green" data-a="novaVantagem">+ Nova vantagem</button>
+  ${E.vantagens.map(v => { const p = parceiroDe(v), venc = v.ate && !vantagemValida({ ...v, ativo: true });
+    return `<div class="item"><div class="row"><h3>${esc(v.titulo)}</h3>${v.desconto ? `<span class="selo-desc">${esc(v.desconto)}</span>` : ''}</div>
+    <div class="meta">${p ? esc(p.nome) : 'Sem parceiro'}${v.ate ? ' · até ' + new Date(v.ate + 'T12:00').toLocaleDateString('pt-BR') : ''}</div>
+    <div class="row"><span>${venc ? '<span class="pill p-cancelado">Vencida</span>' : v.ativo ? '<span class="pill p-fechado">Ativa</span>' : '<span class="pill p-cancelado">Pausada</span>'}</span>
+    <span class="btns"><button class="ghost" data-ev="${v.id}">Editar</button><button class="ghost" data-pv="${v.id}">${v.ativo ? 'Pausar' : 'Ativar'}</button></span></div></div>`; }).join('') || '<div class="empty">Nenhuma vantagem ainda.</div>'}
+  </div>`;
+
+TELAS.admVantagem = id => {
+  const d = rascunho;
+  return `${topo(id ? 'Editar vantagem' : 'Nova vantagem')}<div class="body"><form id="f-vant">
+  <label for="v-tit">Título da vantagem<input id="v-tit" required maxlength="80" value="${esc(d.titulo)}" placeholder="Ex.: Desconto em ração e suplemento"></label>
+  <label for="v-desc">Desconto <span class="opt">(aparece em destaque)</span><input id="v-desc" maxlength="30" value="${esc(d.desconto)}" placeholder="Ex.: 10% ou R$ 0,20 por litro"></label>
+  <label for="v-parc">Parceiro<select id="v-parc"><option value="">Sem parceiro</option>${E.parceiros.map(p => `<option value="${p.id}" ${d.parceiro_id === p.id ? 'selected' : ''}>${esc(p.nome)}${p.ativo ? '' : ' (pausado)'}</option>`).join('')}</select></label>
+  ${E.parceiros.length ? '' : '<p class="meta">Cadastre primeiro o parceiro em Nossos Parceiros para ligar a vantagem a ele.</p>'}
+  <label for="v-regras">Como usar / regras<textarea id="v-regras" rows="4" placeholder="Ex.: Mostre o app no caixa. Válido para compras acima de R$ 200.">${esc(d.descr)}</textarea></label>
+  <label>Foto <span class="opt">(opcional)</span></label>
+  <div class="media">${d._previa || d.img ? `<div class="m"><img src="${esc(d._previa || urlBanner(d.img))}" alt=""><button type="button" class="x" data-a="tirarFoto" aria-label="Remover foto">×</button></div>` : ''}<label class="addm" for="v-img">＋<br>${d.img || d._previa ? 'Trocar' : 'Foto'}<input id="v-img" type="file" accept="image/*"></label></div>
+  <div class="two"><label for="v-ate">Válida até <span class="opt">(opcional)</span><input id="v-ate" type="date" value="${esc(d.ate || '')}"></label>
+  <label class="sw" for="v-at" style="flex-direction:row;align-self:end;padding-bottom:12px"><input id="v-at" type="checkbox" ${d.ativo ? 'checked' : ''}> Ativa</label></div>
+  <button class="cta green" type="submit">${id ? 'Salvar vantagem' : 'Publicar vantagem'}</button>
+  ${id ? '<button type="button" class="ghost red" data-a="excluirVantagem">Excluir vantagem</button>' : ''}</form></div>`;
+};
+
+TELAS.admParceiros = () => `${topo('Nossos Parceiros')}<div class="body">
+  <p class="note">Os parceiros ativos aparecem para os produtores em Nossos Parceiros, com o que cada um oferece e o WhatsApp.</p>
+  <button class="cta green" data-a="novoParceiro">+ Novo parceiro</button>
+  ${E.parceiros.map(p => { const n = E.vantagens.filter(v => v.parceiro_id === p.id).length;
+    return `<div class="item"><div class="parc">${imgOuIcone(p.img, p.nome)}<span class="parc-t"><h3>${esc(p.nome)}</h3><span class="meta">${esc([p.categoria, p.mun].filter(Boolean).join(' · '))}</span>${p.oferece ? `<span class="meta">${esc(p.oferece)}</span>` : ''}</span></div>
+    <div class="row"><span>${p.ativo ? '<span class="pill p-fechado">Ativo</span>' : '<span class="pill p-cancelado">Pausado</span>'} <span class="meta">${n} vantagem(ns)</span></span>
+    <span class="btns"><button class="ghost" data-ep="${p.id}">Editar</button><button class="ghost" data-pp="${p.id}">${p.ativo ? 'Pausar' : 'Ativar'}</button></span></div></div>`; }).join('') || '<div class="empty">Nenhum parceiro ainda.</div>'}
+  </div>`;
+
+TELAS.admParceiro = id => {
+  const d = rascunho;
+  const vs = id ? E.vantagens.filter(v => v.parceiro_id === id) : [];
+  return `${topo(id ? 'Editar parceiro' : 'Novo parceiro')}<div class="body"><form id="f-parc">
+  <label for="pa-nome">Nome do parceiro<input id="pa-nome" required maxlength="80" value="${esc(d.nome)}" placeholder="Ex.: Agropecuária Campo Forte"></label>
+  <label for="pa-cat">Tipo de negócio<input id="pa-cat" list="pa-cats" maxlength="40" value="${esc(d.categoria)}" placeholder="Ex.: Agropecuária"></label>
+  <datalist id="pa-cats">${['Agropecuária', 'Veterinário', 'Transporte de gado', 'Posto de combustível', 'Frigorífico', 'Leiloeiro', 'Máquinas e peças', 'Material de construção', 'Banco / crédito rural', 'Assistência técnica'].map(c => `<option value="${c}">`).join('')}</datalist>
+  <label for="pa-of">O que oferece<textarea id="pa-of" rows="2" placeholder="Ex.: Ração, sal mineral, arame, vacinas">${esc(d.oferece)}</textarea></label>
+  <label for="pa-desc">Mais informações <span class="opt">(opcional)</span><textarea id="pa-desc" rows="3" placeholder="Ex.: Entrega nas vicinais às terças e sextas.">${esc(d.descr)}</textarea></label>
+  <label for="pa-fone">WhatsApp do parceiro<input id="pa-fone" type="tel" inputmode="tel" value="${esc(d.fone ? foneBonito(d.fone) : '')}" placeholder="(97) 99999-9999"></label>
+  <div class="two"><label for="pa-end">Endereço <span class="opt">(opcional)</span><input id="pa-end" value="${esc(d.endereco)}"></label>
+  <label for="pa-mun">Município<input id="pa-mun" list="pa-muns" value="${esc(d.mun)}"></label></div>
+  <datalist id="pa-muns">${MUNICIPIOS.map(m => `<option value="${m}">`).join('')}</datalist>
+  <label>Logo ou foto <span class="opt">(opcional)</span></label>
+  <div class="media">${d._previa || d.img ? `<div class="m"><img src="${esc(d._previa || urlBanner(d.img))}" alt=""><button type="button" class="x" data-a="tirarFoto" aria-label="Remover foto">×</button></div>` : ''}<label class="addm" for="pa-img">＋<br>${d.img || d._previa ? 'Trocar' : 'Foto'}<input id="pa-img" type="file" accept="image/*"></label></div>
+  <label class="sw" for="pa-at" style="flex-direction:row"><input id="pa-at" type="checkbox" ${d.ativo ? 'checked' : ''}> Ativo (aparece para os produtores)</label>
+  <button class="cta green" type="submit">${id ? 'Salvar parceiro' : 'Cadastrar parceiro'}</button>
+  ${id ? '<button type="button" class="ghost red" data-a="excluirParceiro">Excluir parceiro</button>' : ''}</form>
+  ${id ? `<h2 class="sec">Vantagens deste parceiro (${vs.length})</h2>${vs.map(v => `<div class="item"><div class="row"><h3>${esc(v.titulo)}</h3>${v.desconto ? `<span class="selo-desc">${esc(v.desconto)}</span>` : ''}</div><button class="ghost" data-ev="${v.id}" style="align-self:flex-start">Editar</button></div>`).join('')}
+  <button class="ghost" data-a="novaVantagem" style="width:100%">+ Nova vantagem deste parceiro</button>` : ''}</div>`;
+};
 
 TELAS.campanha = id => {
   const b = E.banners.find(x => x.id === id) || E.adm.banners.find(x => x.id === id);
@@ -506,11 +601,15 @@ TELAS.admLista = () => {
   <button class="cta" data-a="relatorio">Relatório de negociações</button>
   <button class="ghost" data-a="admBanners">Banners da tela inicial${novosInt ? ' <span class="dot"></span>' : ''}</button>
   <button class="ghost" data-a="admVic">Vicinais${sug ? ` · ${sug} nova(s) para conferir` : ''}</button>
+  <button class="ghost" data-a="admVantagens">Clube de Vantagens</button>
+  <button class="ghost" data-a="admParceiros">Nossos Parceiros</button>
   <button class="ghost" data-a="admProdutores">Produtores e administradores</button>
   ${iconeVoltarAdm()}
   <button class="ghost red" data-a="sair">Sair</button></div></div>`;
 };
 
+// Mensagem que já vem escrita abaixo da oferta (o administrador pode mudar antes de enviar)
+const mensagemPadraoOferta = u => `Olá ${((u && u.nome) || '').trim().split(/\s+/)[0] || 'produtor'}, temos interessados no seu rebanho, caso aceite a proposta podemos agendar uma visita.`;
 TELAS.admLote = id => {
   const l = E.adm.lancs.find(x => x.id === id);
   if (!l) return topo('Lançamento') + '<div class="empty">Lançamento não encontrado.</div>';
@@ -528,7 +627,7 @@ TELAS.admLote = id => {
   <h2 class="sec">Histórico</h2>${conversa(l, 'adm')}
   ${l.excluido_em ? '<p class="note">O produtor excluiu este lançamento. Ele continua no relatório.</p>' : `<h2 class="sec">Fazer oferta ou mandar mensagem</h2>
   <form id="f-of"><label for="o-val">Oferta por @ (R$) <span class="opt">(opcional)</span><input id="o-val" type="number" inputmode="decimal" step="0.01" placeholder="Ex.: ${Math.max(0, (Number(l.valor) || 0) - 5)}"></label>
-   <label for="o-txt">Mensagem<textarea id="o-txt" rows="3" placeholder="Escreva para o produtor"></textarea></label>
+   <label for="o-txt">Mensagem<textarea id="o-txt" rows="4" placeholder="Escreva para o produtor">${l.tipo === 'venda' ? esc(mensagemPadraoOferta(u)) : ''}</textarea></label>
    <button class="cta green" type="submit">Enviar ao produtor</button></form>`}</div>`;
 };
 
@@ -587,7 +686,40 @@ TELAS.admProdutores = () => {
   </div>`;
 };
 
-let filtroRel = { de: '', ate: '', st: 'todos', tipo: 'todos' };
+let filtroRel = { de: '', ate: '', st: 'todos', tipo: 'todos', ver: 'lanc' };
+// Agrupa os lançamentos por produtor ou por vicinal, com totais
+function agrupar(ls, por) {
+  const g = new Map();
+  for (const l of ls) {
+    const u = l.perfil || {};
+    const chave = por === 'prod' ? (l.user_id || u.id || '?') : (u.vic || 'Sem vicinal');
+    if (!g.has(chave)) g.set(chave, { chave, nome: por === 'prod' ? (u.nome || '?') : chave, perfil: u, ls: [], prods: new Set() });
+    const x = g.get(chave); x.ls.push(l); x.prods.add(l.user_id);
+  }
+  return [...g.values()].map(x => somar(x)).sort((a, b) => b.valor - a.valor || b.lancs - a.lancs || a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+function somar(x) {
+  const ls = x.ls, f = ls.filter(l => l.status === 'fechado');
+  return { ...x, lancs: ls.length, vendas: ls.filter(l => l.tipo === 'venda').length, compras: ls.filter(l => l.tipo === 'compra').length,
+    cab: ls.reduce((s, l) => s + Number(l.qtd || 0), 0), andamento: ls.filter(l => l.status === 'negociacao' || l.status === 'visita').length,
+    fechados: f.length, cabFech: f.reduce((s, l) => s + Number(l.qtd || 0), 0), valor: f.reduce((s, l) => s + valorFechado(l), 0),
+    pedido: ls.reduce((s, l) => s + total(l), 0), nProd: x.prods ? x.prods.size : 0 };
+}
+function grupoHtml(ls, por) {
+  const gs = agrupar(ls, por), T = somar({ ls, prods: new Set(ls.map(l => l.user_id)) });
+  if (!gs.length) return '<div class="empty">Nenhum lançamento no período.</div>';
+  const linhaTotais = (x, rot) => `<tr class="tot"><td>${rot}</td>${por === 'vic' ? `<td class="r">${x.nProd}</td>` : ''}<td class="r">${x.lancs}</td><td class="r">${x.vendas}</td><td class="r">${x.compras}</td><td class="r">${num(x.cab)}</td><td class="r">${brl0(x.pedido)}</td><td class="r">${x.andamento}</td><td class="r">${x.fechados}</td><td class="r">${num(x.cabFech)}</td><td class="r">${brl0(x.valor)}</td></tr>`;
+  const resumo = `<h2 class="sec">Resumo ${por === 'prod' ? 'por produtor' : 'por vicinal'} (${gs.length})</h2><div class="tbl"><table><thead><tr><th>${por === 'prod' ? 'Produtor' : 'Vicinal'}</th>${por === 'vic' ? '<th class="r">Produtores</th>' : ''}<th class="r">Lançamentos</th><th class="r">Vendas</th><th class="r">Compras</th><th class="r">Cabeças</th><th class="r">Valor pedido</th><th class="r">Em andamento</th><th class="r">Fechados</th><th class="r">Cabeças fechadas</th><th class="r">Valor fechado</th></tr></thead><tbody>
+    ${gs.map(x => linhaTotais(x, `<button type="button" class="lnk" data-grupo="g-${esc(String(x.chave)).replace(/[^\w-]/g, '_')}">${esc(x.nome)}</button>`).replace('class="tot"', '')).join('')}${linhaTotais(T, '<b>Total geral</b>')}</tbody></table></div>`;
+  const detalhes = gs.map(x => { const u = x.perfil || {};
+    return `<div class="item grupo" id="g-${esc(String(x.chave)).replace(/[^\w-]/g, '_')}"><div class="row"><h3>${esc(x.nome)}</h3><span class="price">${brl0(x.valor)}</span></div>
+    <div class="meta">${por === 'prod' ? `${esc(u.prop || '')}${u.vic ? ' · ' + esc(u.vic) : ''}${u.km ? ', km ' + esc(u.km) : ''} · ${esc(foneBonito(u.fone))}` : `${x.nProd} produtor(es)`}</div>
+    <div class="meta"><b>${x.lancs}</b> lançamento(s): ${x.vendas} venda(s), ${x.compras} compra(s) · <b>${num(x.cab)}</b> cabeças · ${x.fechados} fechado(s) (${num(x.cabFech)} cab.) · ${x.andamento} em andamento</div>
+    <div class="tbl"><table><thead><tr><th>Data</th>${por === 'vic' ? '<th>Produtor</th>' : ''}<th>Tipo</th><th>Lote</th><th class="r">Pedido/@</th><th class="r">Fechado/@</th><th class="r">Valor fechado</th><th>Status</th></tr></thead><tbody>
+    ${x.ls.map(l => `<tr data-abrir="${l.id}"><td>${fd(l.criado_em)}</td>${por === 'vic' ? `<td>${esc((l.perfil || {}).nome)}</td>` : ''}<td>${l.tipo === 'venda' ? 'Venda' : 'Compra'}</td><td>${lancTitulo(l)}, ${pesoTxt(l)}</td><td class="r">${brl(l.valor)}</td><td class="r">${l.valor_fechado ? brl(l.valor_fechado) : '–'}</td><td class="r">${l.status === 'fechado' ? brl0(valorFechado(l)) : '–'}</td><td>${ST[l.status]}${l.excluido_em ? ' (excluído)' : ''}</td></tr>`).join('')}
+    <tr class="tot"><td colspan="${por === 'vic' ? 6 : 5}">Total</td><td class="r">${brl0(x.valor)}</td><td></td></tr></tbody></table></div></div>`; }).join('');
+  return resumo + `<h2 class="sec">Lançamentos de cada ${por === 'prod' ? 'produtor' : 'vicinal'}</h2>` + detalhes;
+}
 function linhasRelatorio() {
   return E.adm.lancs.filter(l => {
     const d = String(l.criado_em).slice(0, 10);
@@ -606,20 +738,30 @@ TELAS.relatorio = () => {
   <div class="stats"><div class="stat"><div class="v">${ls.length}</div><div class="k">Lançamentos recebidos</div></div><div class="stat"><div class="v">${cnt('fechado')}</div><div class="k">Negócios fechados</div></div>
   <div class="stat"><div class="v">${cnt('negociacao') + cnt('visita')}</div><div class="k">Em andamento</div></div><div class="stat"><div class="v">${num(cab)}</div><div class="k">Cabeças negociadas</div></div></div>
   <div class="total"><span>Valor dos negócios fechados</span><b class="price">${brl0(vol)}</b></div>
+  <div class="chips" role="group" aria-label="Agrupar">${[['lanc', 'Todos os lançamentos'], ['prod', 'Por produtor'], ['vic', 'Por vicinal']].map(([k, v]) => `<button class="chip" data-ver="${k}" aria-pressed="${filtroRel.ver === k}">${v}</button>`).join('')}</div>
   <div class="btns"><button class="ghost" data-a="baixarPlanilha">Baixar planilha (Excel)</button><button class="ghost" data-a="imprimir">Imprimir ou salvar PDF</button></div>
-  <div class="tbl"><table><thead><tr><th>Data</th><th>Produtor</th><th>Vicinal</th><th>Tipo</th><th>Lote</th><th class="r">Pedido/@</th><th class="r">Última oferta</th><th class="r">Fechado/@</th><th class="r">Valor fechado</th><th>Status</th><th>Responsável</th><th class="r">Msgs</th></tr></thead><tbody>
+  ${filtroRel.ver !== 'lanc' ? grupoHtml(ls, filtroRel.ver) + '</div>' : ''}${filtroRel.ver !== 'lanc' ? '' : `<div class="tbl"><table><thead><tr><th>Data</th><th>Produtor</th><th>Vicinal</th><th>Tipo</th><th>Lote</th><th class="r">Pedido/@</th><th class="r">Última oferta</th><th class="r">Fechado/@</th><th class="r">Valor fechado</th><th>Status</th><th>Responsável</th><th class="r">Msgs</th></tr></thead><tbody>
   ${ls.map(l => `<tr data-abrir="${l.id}"><td>${fd(l.criado_em)}</td><td>${esc((l.perfil || {}).nome)}</td><td>${esc((l.perfil || {}).vic || '')}</td><td>${l.tipo === 'venda' ? 'Venda' : 'Compra'}</td><td>${lancTitulo(l)}, ${pesoTxt(l)}</td><td class="r">${brl(l.valor)}</td><td class="r">${ultimaOferta(l) ? brl(ultimaOferta(l)) : '–'}</td><td class="r">${l.valor_fechado ? brl(l.valor_fechado) : '–'}</td><td class="r">${l.status === 'fechado' ? brl0(valorFechado(l)) : '–'}</td><td>${ST[l.status]}${l.excluido_em ? ' (excluído)' : ''}</td><td>${esc(responsavel(l))}</td><td class="r">${(l.mensagens || []).filter(h => h.papel !== 'sys').length}</td></tr>`).join('') || '<tr><td colspan="12">Nenhum lançamento no período.</td></tr>'}
-  </tbody></table></div></div>`;
+  </tbody></table></div></div>`}`;
 };
 function baixarPlanilha() {
   const ls = linhasRelatorio();
   const cab = ['Data', 'Produtor', 'Telefone', 'Propriedade', 'Município', 'Vicinal', 'Km', 'Tipo', 'Animal', 'Quantidade', 'Peso médio', 'Unidade', 'Peso em @', 'Pedido R$/@', 'Total pedido R$', 'Última oferta R$/@', 'Fechado R$/@', 'Valor fechado R$', 'Status', 'Responsável', 'Mensagens', 'Excluído pelo produtor'];
   const n = v => v == null || v === '' ? '' : String(Math.round(Number(v) * 100) / 100).replace('.', ',');
-  const linhas = ls.map(l => { const u = l.perfil || {};
-    return [fd(l.criado_em), u.nome, foneBonito(u.fone), u.prop, u.mun, u.vic, u.km, l.tipo === 'venda' ? 'Venda' : 'Compra', CAT[l.cat], l.qtd, n(l.peso), l.un, n(arroba(l)), n(l.valor), n(total(l)), n(ultimaOferta(l)), n(l.valor_fechado), l.status === 'fechado' ? n(valorFechado(l)) : '', ST[l.status], responsavel(l), (l.mensagens || []).filter(h => h.papel !== 'sys').length, l.excluido_em ? 'Sim' : '']; });
+  const linhaDe = l => { const u = l.perfil || {};
+    return [fd(l.criado_em), u.nome, foneBonito(u.fone), u.prop, u.mun, u.vic, u.km, l.tipo === 'venda' ? 'Venda' : 'Compra', CAT[l.cat], l.qtd, n(l.peso), l.un, n(arroba(l)), n(l.valor), n(total(l)), n(ultimaOferta(l)), n(l.valor_fechado), l.status === 'fechado' ? n(valorFechado(l)) : '', ST[l.status], responsavel(l), (l.mensagens || []).filter(h => h.papel !== 'sys').length, l.excluido_em ? 'Sim' : '']; };
+  let linhas;
+  if (filtroRel.ver === 'lanc') linhas = ls.map(linhaDe);
+  else {
+    // agrupado: lançamentos de cada produtor (ou vicinal) e uma linha de total depois de cada grupo
+    const totalLinha = (rot, x) => { const r = new Array(cab.length).fill(''); r[0] = rot; r[9] = x.cab; r[14] = n(x.pedido); r[17] = n(x.valor); r[18] = `${x.lancs} lançamento(s), ${x.fechados} fechado(s)`; return r; };
+    linhas = [];
+    for (const x of agrupar(ls, filtroRel.ver)) { x.ls.forEach(l => linhas.push(linhaDe(l))); linhas.push(totalLinha(`TOTAL ${filtroRel.ver === 'prod' ? 'PRODUTOR' : 'VICINAL'}: ${x.nome}`, x)); linhas.push(new Array(cab.length).fill('')); }
+    linhas.push(totalLinha('TOTAL GERAL', somar({ ls, prods: new Set(ls.map(l => l.user_id)) })));
+  }
   const csv = '﻿' + [cab, ...linhas].map(r => r.map(c => { c = String(c ?? ''); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';')).join('\r\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `rede-do-boi-negociacoes-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(a); a.click(); a.remove();
+  a.download = `rede-do-boi-negociacoes${filtroRel.ver === 'prod' ? '-por-produtor' : filtroRel.ver === 'vic' ? '-por-vicinal' : ''}-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(a); a.click(); a.remove();
 }
 
 // =====================================================================
@@ -640,6 +782,9 @@ function ligar(tela, arg) {
   });
   app.querySelectorAll('[data-camp]').forEach(b => b.onclick = () => ir('campanha', b.dataset.camp));
   app.querySelectorAll('[data-banner]').forEach(b => b.onclick = () => abrirBanner(b.dataset.banner));
+  app.querySelectorAll('[data-parc]').forEach(b => b.onclick = e => { e.stopPropagation(); ir('parceiro', b.dataset.parc); });
+  app.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => { const v = E.vantagens.find(x => x.id === b.dataset.ev); rascunho = { ...v, ate: v.ate || '' }; ir('admVantagem', v.id); });
+  app.querySelectorAll('[data-ep]').forEach(b => b.onclick = () => { const x = E.parceiros.find(y => y.id === b.dataset.ep); rascunho = { ...x }; ir('admParceiro', x.id); });
   const T = LIGAR[tela]; if (T) T(arg);
 }
 function abrirLanc(id) {
@@ -791,8 +936,51 @@ const LIGAR = {
         dar ? 'Tornar administrador' : 'Tirar acesso', async () => { if (exigeInternet() && await tentar(() => api.definirAdmin(p.id, dar), 'Feito.')) await atualizar(); });
     });
   },
+  admVantagens() {
+    app.querySelectorAll('[data-pv]').forEach(b => b.onclick = async () => {
+      if (!exigeInternet()) return; const v = E.vantagens.find(x => x.id === b.dataset.pv);
+      if (await tentar(() => api.salvarVantagem({ ...v, ativo: !v.ativo }), v.ativo ? 'Vantagem pausada.' : 'Vantagem ativada.')) await atualizar();
+    });
+  },
+  admParceiros() {
+    app.querySelectorAll('[data-pp]').forEach(b => b.onclick = async () => {
+      if (!exigeInternet()) return; const p = E.parceiros.find(x => x.id === b.dataset.pp);
+      if (await tentar(() => api.salvarParceiro({ ...p, ativo: !p.ativo }), p.ativo ? 'Parceiro pausado.' : 'Parceiro ativado.')) await atualizar();
+    });
+  },
+  admVantagem(id) {
+    const guardar = () => { rascunho.titulo = F('v-tit').value.trim(); rascunho.desconto = F('v-desc').value.trim(); rascunho.parceiro_id = F('v-parc').value;
+      rascunho.descr = F('v-regras').value.trim(); rascunho.ate = F('v-ate').value; rascunho.ativo = F('v-at').checked; };
+    F('v-img').onchange = async ev => { guardar(); const f = ev.target.files[0]; if (!f) return;
+      const blob = await reduzirFoto(f, 1200, .8); if (!blob) return aviso('Não consegui abrir essa imagem.');
+      rascunho._blob = blob; rascunho._previa = URL.createObjectURL(blob); app.dataset.tela = ''; pintar(); };
+    F('f-vant').onsubmit = async e => {
+      e.preventDefault(); guardar(); if (!rascunho.titulo) return aviso('Escreva o título da vantagem.'); if (!exigeInternet()) return;
+      const ok = await tentar(async () => { if (rascunho._blob) rascunho.img = await api.enviarImagemBanner(rascunho._blob); const { _blob, _previa, ...v } = rascunho; await api.salvarVantagem(v); },
+        rascunho.ativo ? 'Vantagem publicada no Clube.' : 'Vantagem salva (pausada).');
+      if (ok) { rascunho = null; await atualizar(); voltar(); }
+    };
+  },
+  admParceiro(id) {
+    const guardar = () => { rascunho.nome = F('pa-nome').value.trim(); rascunho.categoria = F('pa-cat').value.trim(); rascunho.oferece = F('pa-of').value.trim();
+      rascunho.descr = F('pa-desc').value.trim(); rascunho.fone = F('pa-fone').value.trim() ? foneNormal(F('pa-fone').value) : ''; rascunho.endereco = F('pa-end').value.trim();
+      rascunho.mun = F('pa-mun').value.trim(); rascunho.ativo = F('pa-at').checked; };
+    F('pa-img').onchange = async ev => { guardar(); const f = ev.target.files[0]; if (!f) return;
+      const blob = await reduzirFoto(f, 800, .82); if (!blob) return aviso('Não consegui abrir essa imagem.');
+      rascunho._blob = blob; rascunho._previa = URL.createObjectURL(blob); app.dataset.tela = ''; pintar(); };
+    F('f-parc').onsubmit = async e => {
+      e.preventDefault(); guardar(); if (!rascunho.nome) return aviso('Escreva o nome do parceiro.');
+      if (rascunho.fone && !foneValido(rascunho.fone)) return aviso('WhatsApp do parceiro: digite com DDD. Ex.: (97) 99999-9999');
+      if (!exigeInternet()) return;
+      const ok = await tentar(async () => { if (rascunho._blob) rascunho.img = await api.enviarImagemBanner(rascunho._blob); const { _blob, _previa, ...p } = rascunho; await api.salvarParceiro(p); },
+        rascunho.ativo ? 'Parceiro publicado.' : 'Parceiro salvo (pausado).');
+      if (ok) { rascunho = null; await atualizar(); voltar(); }
+    };
+  },
   relatorio() {
-    const f = F('f-rel'); f.onchange = () => { filtroRel = { de: F('r-de').value, ate: F('r-ate').value, st: F('r-st').value, tipo: F('r-tipo').value }; pintar(); };
+    const f = F('f-rel'); f.onchange = () => { filtroRel = { ...filtroRel, de: F('r-de').value, ate: F('r-ate').value, st: F('r-st').value, tipo: F('r-tipo').value }; app.dataset.tela = ''; pintar(); };
+    app.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => { filtroRel.ver = b.dataset.ver; pintar(true); });
+    app.querySelectorAll('[data-grupo]').forEach(b => b.onclick = () => { const el = document.getElementById(b.dataset.grupo); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   },
 };
 
@@ -807,7 +995,9 @@ async function acao(a, arg) {
   if (a === 'avisos') return ir('avisos');
   if (a === 'permitirAvisos') return pedirAvisos();
   if (a === 'lancar') { rascunho = { id: novoId(), tipo: null, cat: null, midias: [], un: '@' }; return ir('lancar'); }
-  if (['meus', 'vantagens', 'ofertas', 'parceiros', 'relatorio', 'admVic', 'admBanners', 'admProdutores'].includes(a)) return ir(a);
+  if (['meus', 'vantagens', 'ofertas', 'parceiros', 'relatorio', 'admVic', 'admBanners', 'admProdutores', 'admVantagens', 'admParceiros'].includes(a)) return ir(a);
+  if (a === 'novoParceiro') { rascunho = { nome: '', categoria: '', oferece: '', descr: '', fone: '', endereco: '', mun: '', img: null, ativo: true }; return ir('admParceiro', null); }
+  if (a === 'novaVantagem') { rascunho = { titulo: '', desconto: '', descr: '', parceiro_id: arg && E.parceiros.some(p => p.id === arg) ? arg : '', img: null, ate: '', ativo: true }; return ir('admVantagem', null); }
   if (a === 'trocarVisao') { E.visao = E.visao === 'adm' ? 'prod' : 'adm'; return inicio(); }
   if (a === 'sair') return caixa('Sair desta conta?', E.fila.length ? 'Ainda há envios guardados neste aparelho. Eles serão enviados quando você entrar de novo com este telefone.' : 'Para entrar de novo é só digitar o telefone.', 'Sair', async () => {
     await api.sair(); Object.assign(E, { usuario: null, perfil: null, lancs: [], adm: { lancs: [], banners: [], sugestoes: [], perfis: [] }, visao: 'prod', carregado: false }); inicio(); });
@@ -829,6 +1019,11 @@ async function acao(a, arg) {
     await enfileirar('interesse', { banner_id: arg }); app.dataset.tela = ''; pintar();
     return caixa('Interesse enviado!', 'A equipe da Rede do Boi vai entrar em contato com você.', 'OK', null, true);
   }
+  if (a === 'tirarFoto') { rascunho.img = null; rascunho._blob = null; rascunho._previa = null; app.dataset.tela = ''; return pintar(); }
+  if (a === 'excluirVantagem') return caixa('Excluir esta vantagem?', 'Ela sai do Clube de Vantagens dos produtores.', 'Excluir', async () => {
+    if (exigeInternet() && await tentar(() => api.excluirVantagem(rascunho.id), 'Vantagem excluída.')) { rascunho = null; await atualizar(); voltar(); } });
+  if (a === 'excluirParceiro') return caixa('Excluir este parceiro?', 'Ele sai da lista de parceiros. As vantagens dele continuam, mas ficam sem parceiro.', 'Excluir', async () => {
+    if (exigeInternet() && await tentar(() => api.excluirParceiro(rascunho.id), 'Parceiro excluído.')) { rascunho = null; await atualizar(); voltar(); } });
   if (a === 'baixarPlanilha') return baixarPlanilha();
   if (a === 'imprimir') return window.print();
 }
