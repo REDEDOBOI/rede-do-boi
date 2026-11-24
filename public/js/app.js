@@ -11,6 +11,7 @@ const MUNICIPIOS = ['Apuí', 'Manicoré'];
 const KG_POR_ARROBA = 30; // gado vivo: 1 @ = 30 kg
 const MSG_ACEITO = 'Seu lançamento foi aceito, entraremos em contato em breve, obrigado!';
 const VIDEO_MAX_MB = 50;
+const MODO_COMPRADOR = window.RDB_MODO === 'comprador'; // comprador.html: área dos compradores de lotes
 
 // ---------- formatação ----------
 const brl = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -30,8 +31,9 @@ const waLink = (fone, texto) => `https://wa.me/${soDigitos(fone)}${texto ? '?tex
 // ---------- estado ----------
 const E = {
   usuario: null, perfil: null, vicinais: [], lancs: [], banners: [], interesses: [], parceiros: [], vantagens: [],
-  adm: { lancs: [], banners: [], sugestoes: [], perfis: [] },
-  fila: [], online: navigator.onLine, visao: 'prod', filtroAdm: 'todos', carregado: false,
+  adm: { lancs: [], banners: [], sugestoes: [], perfis: [], compradores: [], lotes: [] },
+  comprador: null, lotesComp: [],
+  fila: [], online: navigator.onLine, visao: MODO_COMPRADOR ? 'comp' : 'prod', filtroAdm: 'todos', carregado: false,
 };
 let pilha = [], rascunho = null;
 const app = document.getElementById('app');
@@ -39,12 +41,13 @@ const ehAdmin = () => !!(E.perfil && E.perfil.admin && E.perfil.senha_definida);
 
 async function salvarCache() {
   if (!E.usuario) return;
-  const { perfil, vicinais, lancs, banners, interesses, adm, parceiros, vantagens } = E;
-  try { await kv.set('cache:' + E.usuario.id, { perfil, vicinais, lancs, banners, interesses, adm, parceiros, vantagens, em: Date.now() }); } catch (e) {}
+  const { perfil, vicinais, lancs, banners, interesses, adm, parceiros, vantagens, comprador, lotesComp } = E;
+  try { await kv.set(chaveCache(), { perfil, vicinais, lancs, banners, interesses, adm, parceiros, vantagens, comprador, lotesComp, em: Date.now() }); } catch (e) {}
 }
+const chaveCache = () => (MODO_COMPRADOR ? 'cachec:' : 'cache:') + E.usuario.id;
 async function lerCache() {
-  const c = await kv.get('cache:' + E.usuario.id).catch(() => null);
-  if (c) Object.assign(E, { perfil: c.perfil, vicinais: c.vicinais || [], lancs: c.lancs || [], banners: c.banners || [], interesses: c.interesses || [], adm: c.adm || E.adm, parceiros: c.parceiros || [], vantagens: c.vantagens || [] });
+  const c = await kv.get(chaveCache()).catch(() => null);
+  if (c) Object.assign(E, { perfil: c.perfil, vicinais: c.vicinais || [], lancs: c.lancs || [], banners: c.banners || [], interesses: c.interesses || [], adm: { ...E.adm, ...(c.adm || {}) }, parceiros: c.parceiros || [], vantagens: c.vantagens || [], comprador: c.comprador || null, lotesComp: c.lotesComp || [] });
   return !!c;
 }
 
@@ -147,6 +150,7 @@ async function atualizar() {
   atualizando = (async () => {
     try {
       const antes = avisosIds();
+      if (MODO_COMPRADOR) { await atualizarComprador(); E.carregado = true; await salvarCache(); notificarNovos(antes); return; }
       const perfil = await api.perfil();
       E.perfil = perfil;
       if (!perfil) { salvarCache(); return; }
@@ -154,8 +158,9 @@ async function atualizar() {
         api.parceiros().catch(() => E.parceiros), api.vantagens().catch(() => E.vantagens)]);
       Object.assign(E, { vicinais: vic, lancs, banners: bans, interesses: ints, parceiros: parcs, vantagens: vants });
       if (ehAdmin()) {
-        const [al, ab, sg, pf] = await Promise.all([api.todosLancamentos(), api.bannersAdmin(), api.sugestoes(), api.perfis()]);
-        E.adm = { lancs: al, banners: ab, sugestoes: sg, perfis: pf };
+        const [al, ab, sg, pf, cp, lt] = await Promise.all([api.todosLancamentos(), api.bannersAdmin(), api.sugestoes(), api.perfis(),
+          api.compradores().catch(() => E.adm.compradores || []), api.lotesAdmin().catch(() => E.adm.lotes || [])]);
+        E.adm = { lancs: al, banners: ab, sugestoes: sg, perfis: pf, compradores: cp, lotes: lt };
       }
       E.carregado = true;
       await salvarCache();
@@ -168,14 +173,31 @@ async function atualizar() {
   return atualizando;
 }
 
+// Área do comprador: lotes que ele pode ver. Administrador sem cadastro de comprador vê uma prévia.
+async function atualizarComprador() {
+  const c = await api.souComprador();
+  if (c && c.ativo !== false) { E.comprador = c; E.lotesComp = await api.lotesComprador(); return; }
+  const p = await api.perfil().catch(() => null);
+  if (p && p.admin && p.senha_definida) {
+    E.perfil = p;
+    const ls = await api.lotesAdmin();
+    E.comprador = { id: null, nome: p.nome, previa: true };
+    E.lotesComp = ls.filter(l => l.visivel && ['disponivel', 'reservado'].includes(l.status)).map(({ fin, comprador, ...l }) => ({ ...l, lote_mensagens: [] }));
+    return;
+  }
+  E.comprador = null; E.lotesComp = [];
+}
+
 // ---------- avisos (notificações) ----------
 function avisosProd() { return meusLancs().filter(l => l.prod_novo); }
 function avisosAdm() { return E.adm.lancs.filter(l => l.adm_novo); }
 function interessesNovos() { return E.adm.banners.reduce((s, b) => s + (b.interesses || []).filter(i => i.novo).length, 0); }
-function contarAvisos() { return E.visao === 'adm' ? avisosAdm().length + interessesNovos() : avisosProd().length; }
+function contarAvisos() { return E.visao === 'comp' ? lotesNovosComp().length : E.visao === 'adm' ? avisosAdm().length + interessesNovos() + lotesNovosAdm().length : avisosProd().length; }
 function avisosIds() {
   const ids = new Set(avisosProd().map(l => 'p' + l.id + l.mensagens.length));
   if (ehAdmin()) avisosAdm().forEach(l => ids.add('a' + l.id + (l.mensagens || []).length));
+  if (ehAdmin()) lotesNovosAdm().forEach(l => ids.add('l' + l.id + (l.lote_mensagens || []).length));
+  lotesNovosComp().forEach(l => ids.add('c' + l.id + (l.lote_mensagens || []).length));
   return ids;
 }
 async function notificarNovos(antes) {
@@ -184,7 +206,8 @@ async function notificarNovos(antes) {
   if (!novos.length || !document.hidden) return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const reg = await navigator.serviceWorker?.getRegistration();
-  const titulo = novos.some(i => i[0] === 'a') ? 'Novo lançamento ou resposta no Rede do Boi' : 'Nova mensagem do comprador';
+  const titulo = novos.some(i => i[0] === 'a') ? 'Novo lançamento ou resposta no Rede do Boi' : novos.some(i => i[0] === 'l') ? 'Comprador perguntou ou pediu um lote'
+    : novos.some(i => i[0] === 'c') ? 'Resposta da Rede do Boi sobre o lote' : 'Nova mensagem do comprador';
   const corpo = 'Toque para abrir.';
   if (reg) reg.showNotification(titulo, { body: corpo, icon: 'icons/icon-192.png', badge: 'icons/icon-64.png', tag: 'rdb' });
   else new Notification(titulo, { body: corpo, icon: 'icons/icon-192.png' });
@@ -204,6 +227,7 @@ addEventListener('popstate', () => { if (visor.lista.length) { fecharVisor(); re
 function inicio() { pilha = [[telaInicial()]]; pintar(true); }
 function telaInicial() {
   if (!E.usuario) return 'login';
+  if (MODO_COMPRADOR) return E.comprador ? 'compLotes' : 'naoComprador';
   if (!E.perfil) return 'cadastro';
   if (E.perfil.admin && !E.perfil.senha_definida) return 'criarSenha';
   return E.visao === 'adm' ? 'admLista' : 'inicio';
@@ -228,10 +252,10 @@ function pintar(topo) {
 }
 app.addEventListener('input', e => { if (e.target.id && e.target.type !== 'file') e.target.dataset.sujo = 1; });
 const limparDigitado = () => app.querySelectorAll('[data-sujo]').forEach(e => delete e.dataset.sujo);
-const FORMULARIOS = new Set(['lancar', 'cadastro', 'admBanner', 'admVantagem', 'admParceiro', 'login', 'senha', 'criarSenha']);
+const FORMULARIOS = new Set(['lancar', 'cadastro', 'admBanner', 'admVantagem', 'admParceiro', 'login', 'senha', 'criarSenha', 'admRevForm', 'admComprador']);
 function barraRedeHtml() {
   const q = E.fila.filter(i => E.usuario && i.uid === E.usuario.id).length;
-  if (!E.online) return `<div class="net" id="net">Sem internet. ${E.visao === 'adm' ? 'Mostrando os dados da última conexão.' : q ? `${q} envio(s) guardado(s) no aparelho, vão sozinhos quando conectar.` : 'Você pode lançar normalmente.'}</div>`;
+  if (!E.online) return `<div class="net" id="net">Sem internet. ${E.visao !== 'prod' ? 'Mostrando os dados da última conexão.' : q ? `${q} envio(s) guardado(s) no aparelho, vão sozinhos quando conectar.` : 'Você pode lançar normalmente.'}</div>`;
   if (q) return `<div class="net sync" id="net">Enviando ${q} item(ns) guardado(s)...</div>`;
   return '<div id="net" hidden></div>';
 }
@@ -345,7 +369,13 @@ function iniciarCarrossel() {
 const TELAS = {};
 const iconeVoltarAdm = () => ehAdmin() ? `<button class="ghost" data-a="trocarVisao" style="width:100%">${E.visao === 'adm' ? 'Abrir a área do produtor' : 'Voltar ao painel do comprador'}</button>` : '';
 
-TELAS.login = () => `<div class="login"><img src="${ICON}" alt="Logo Rede do Boi"><p class="slogan">Negócios e vantagens<br>para o pecuarista.</p>
+TELAS.login = () => MODO_COMPRADOR ? `<div class="login"><img src="${ICON}" alt="Logo Rede do Boi"><p class="slogan">Área do comprador<br>Lotes de gado à venda</p>
+  <form id="f-login" novalidate><label for="l-fone">Seu telefone / WhatsApp com DDD<input id="l-fone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(69) 99999-9999" required></label>
+  <button class="cta green" type="submit">Ver os lotes</button></form>
+  <p class="meta" style="text-align:center">Entre com o telefone que você informou à Rede do Boi. Não precisa de senha.</p>
+  ${MODO === 'demo' ? '<p class="note"><b>Modo demonstração</b>. Comprador de exemplo: (69) 91111-2222.</p>' : ''}
+  <a class="meta" href="./" style="text-align:center;margin-top:auto">Sou produtor: abrir o app Rede do Boi</a></div>`
+  : `<div class="login"><img src="${ICON}" alt="Logo Rede do Boi"><p class="slogan">Negócios e vantagens<br>para o pecuarista.</p>
   <form id="f-login" novalidate><label for="l-fone">Seu telefone / WhatsApp com DDD<input id="l-fone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(97) 99999-9999" required></label>
   <button class="cta green" type="submit">Entrar</button></form>
   <button class="cta inst-login" type="button" data-instalar>📲 Colocar o app na tela do celular</button>
@@ -459,13 +489,20 @@ TELAS.lote = id => {
 };
 
 TELAS.avisos = () => {
+  if (E.visao === 'comp') {
+    const ls = lotesNovosComp();
+    return `${topo('Avisos')}<div class="body">${botaoPermitirAvisos()}${ls.length ? ls.map(l => { const ult = msgsLote(l).filter(m => m.papel === 'adm').pop() || {};
+      return `<button class="item" data-cl="${l.id}"><h3>Resposta da Rede do Boi</h3><div class="meta">${lancTitulo(l)} · “${esc(ult.texto)}”</div></button>`; }).join('') : '<div class="empty">Nenhum aviso novo.</div>'}</div>`;
+  }
   if (E.visao === 'adm') {
-    const ls = avisosAdm(), bs = E.adm.banners.filter(b => (b.interesses || []).some(i => i.novo));
+    const ls = avisosAdm(), bs = E.adm.banners.filter(b => (b.interesses || []).some(i => i.novo)), lr = lotesNovosAdm();
     return `${topo('Avisos')}<div class="body">${botaoPermitirAvisos()}
+    ${lr.map(l => { const ns = msgsLote(l).filter(m => m.adm_novo), ult = ns[ns.length - 1] || {};
+      return `<button class="item" data-rl="${l.id}"><h3>${ns.some(m => m.quer_comprar) ? 'Comprador quer comprar o lote' : 'Pergunta de comprador'}</h3><div class="meta">${esc(ult.autor_nome || '')} · ${lancTitulo(l)} · ${fdt(ult.criado_em)}</div>${ult.texto ? `<div class="meta">“${esc(ult.texto)}”</div>` : ''}</button>`; }).join('')}
     ${bs.map(b => `<button class="item" data-banner="${b.id}"><h3>${(b.interesses || []).filter(i => i.novo).length} novo(s) interessado(s) na campanha</h3><div class="meta">${esc(b.titulo)}</div></button>`).join('')}
     ${ls.map(l => { const ult = (l.mensagens || [])[(l.mensagens || []).length - 1]; const novo = (l.mensagens || []).filter(m => m.papel !== 'sys').length === 0 && !l.excluido_em;
       return `<button class="item" data-abrir="${l.id}"><h3>${l.excluido_em ? 'Lançamento excluído pelo produtor' : novo ? `Novo ${l.tipo === 'venda' ? 'lançamento de venda' : 'pedido de compra'}` : (ult && ult.papel === 'prod' ? 'Resposta do produtor' : 'Lançamento alterado')}</h3><div class="meta">${esc((l.perfil || {}).nome)} · ${lancTitulo(l)} · ${fdt(ult ? ult.criado_em : l.criado_em)}</div>${ult && ult.papel === 'prod' ? `<div class="meta">“${esc(ult.texto)}”</div>` : ''}</button>`; }).join('')}
-    ${!ls.length && !bs.length ? '<div class="empty">Nenhum aviso novo.</div>' : ''}</div>`;
+    ${!ls.length && !bs.length && !lr.length ? '<div class="empty">Nenhum aviso novo.</div>' : ''}</div>`;
   }
   const ls = avisosProd();
   return `${topo('Avisos')}<div class="body">${botaoPermitirAvisos()}${ls.length ? ls.map(l => { const ult = l.mensagens[l.mensagens.length - 1] || {};
@@ -599,6 +636,8 @@ TELAS.admLista = () => {
    <div class="row"><span class="meta">${pesoTxt(l)} · ${l.tipo === 'venda' ? 'pede' : 'paga'} ${brl(l.valor)}/@</span><span class="price">${brl0(total(l))}</span></div></button>`; }).join('') : '<div class="empty">Nada neste filtro.</div>'}
   <div class="admbtns">
   <button class="cta" data-a="relatorio">Relatório de negociações</button>
+  <button class="cta green" data-a="admRevenda">Lotes para revenda${lotesNovosAdm().length ? ' <span class="dot"></span>' : ''}</button>
+  <button class="ghost" data-a="admCompradores">Compradores dos lotes</button>
   <button class="ghost" data-a="admBanners">Banners da tela inicial${novosInt ? ' <span class="dot"></span>' : ''}</button>
   <button class="ghost" data-a="admVic">Vicinais${sug ? ` · ${sug} nova(s) para conferir` : ''}</button>
   <button class="ghost" data-a="admVantagens">Clube de Vantagens</button>
@@ -624,6 +663,8 @@ TELAS.admLote = id => {
   <form id="f-st" class="two"><label for="s-st">Status<select id="s-st">${Object.entries(ST).map(([k, v]) => `<option value="${k}" ${l.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
    <label for="s-val">Valor fechado (R$/@)<input id="s-val" type="number" inputmode="decimal" step="0.01" value="${l.valor_fechado ?? ''}" placeholder="Ao fechar"></label>
    <button class="ghost" type="submit" style="grid-column:1/-1">Salvar situação</button></form>
+  ${l.tipo === 'venda' && l.status === 'fechado' ? (() => { const ja = E.adm.lotes.find(x => x.origem_lanc === l.id);
+    return ja ? `<button class="ghost" data-rl="${ja.id}" style="width:100%">Ver o lote de revenda deste gado</button>` : '<button class="ghost" data-a="separarRevenda" style="width:100%">Separar este gado para revenda</button>'; })() : ''}
   <h2 class="sec">Histórico</h2>${conversa(l, 'adm')}
   ${l.excluido_em ? '<p class="note">O produtor excluiu este lançamento. Ele continua no relatório.</p>' : `<h2 class="sec">Fazer oferta ou mandar mensagem</h2>
   <form id="f-of"><label for="o-val">Oferta por @ (R$) <span class="opt">(opcional)</span><input id="o-val" type="number" inputmode="decimal" step="0.01" placeholder="Ex.: ${Math.max(0, (Number(l.valor) || 0) - 5)}"></label>
@@ -765,6 +806,323 @@ function baixarPlanilha() {
 }
 
 // =====================================================================
+// REVENDA DE LOTES (administrador separa lotes e vende para compradores cadastrados)
+// =====================================================================
+const LST = { disponivel: 'À venda', reservado: 'Reservado', vendido: 'Vendido', no_pasto: 'Vendido, no pasto', entregue: 'Entregue', cancelado: 'Cancelado' };
+const VENDIDOS = ['vendido', 'no_pasto', 'entregue'];
+const seloLote = (l, meu) => `<span class="pill pl-${l.status}">${meu && l.status === 'reservado' ? 'Reservado para você' : LST[l.status] || l.status}</span>`;
+const umSo = x => (Array.isArray(x) ? x[0] : x) || null;
+const finDe = l => umSo(l.fin) || {};
+const nv = v => v == null || v === '' || isNaN(Number(String(v).replace(',', '.'))) ? null : Number(String(v).replace(',', '.'));
+function contas(l) {
+  const f = finDe(l), pago = nv(f.valor_pago), desp = nv(f.despesas), vend = nv(f.valor_vendido);
+  return { pago, desp, vend, lucro: vend == null ? null : vend - (pago || 0) - (desp || 0) };
+}
+const msgsLote = l => [...(l.lote_mensagens || [])].sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em)));
+const compradorDe = id => E.adm.compradores.find(c => c.id === id);
+const linkComprador = () => new URL('comprador.html', location.href).href;
+const lotesNovosAdm = () => E.adm.lotes.filter(l => (l.lote_mensagens || []).some(m => m.adm_novo));
+const lotesNovosComp = () => E.lotesComp.filter(l => (l.lote_mensagens || []).some(m => m.comp_novo));
+const meuLote = l => !!(E.comprador && E.comprador.id && l.comprador_id === E.comprador.id);
+const lucroHtml = v => v == null ? '–' : `<span class="${v < 0 ? 'neg' : 'pos'}">${brl0(v)}</span>`;
+
+function conversaLote(ms, lado) {
+  return `<div class="chat">${ms.map(h => {
+    if (h.papel === 'sys') return `<div class="msg sys">${esc(h.texto)} · ${fdt(h.criado_em)}</div>`;
+    const meu = (lado === 'comp' && h.papel === 'comp') || (lado === 'adm' && h.papel === 'adm');
+    const quem = h.papel === 'adm' ? (lado === 'comp' ? 'Rede do Boi' : (h.autor_nome || 'Administrador') + ' · Rede do Boi') : (h.autor_nome || 'Comprador');
+    return `<div class="msg ${meu ? 'me' : 'them'}">${h.quer_comprar ? '<div class="offer"><b>✔ Quero comprar este lote</b></div>' : ''}${esc(h.texto)}<span class="w">${esc(quem)} · ${fdt(h.criado_em)}</span></div>`;
+  }).join('')}</div>`;
+}
+function capaLote(l) {
+  const ms = l.midias || [], m = ms.find(x => x.kind !== 'video') || ms[0];
+  if (!m) return '';
+  return m.kind === 'video' ? `<span class="lc-img"><video src="${esc(urlMidia(m))}#t=0.1" muted preload="metadata"></video><span class="play">▶</span></span>`
+    : `<span class="lc-img"><img src="${esc(urlMidia(m))}" alt="" loading="lazy"></span>`;
+}
+function cartaoLote(l, lado) {
+  const novo = (l.lote_mensagens || []).some(m => lado === 'comp' ? m.comp_novo : m.adm_novo);
+  const c = lado === 'adm' ? contas(l) : null, comp = lado === 'adm' ? umSo(l.comprador) : null;
+  const pedidos = lado === 'adm' ? new Set((l.lote_mensagens || []).filter(m => m.papel === 'comp').map(m => m.comprador_id)).size : 0;
+  return `<button class="item lote-c" data-${lado === 'comp' ? 'cl' : 'rl'}="${l.id}">${capaLote(l)}
+   <div class="row"><span>${seloLote(l, lado === 'comp' && meuLote(l))}${lado === 'adm' && !l.visivel ? ' <span class="pill p-cancelado">Escondido</span>' : ''}</span>${novo ? '<span class="dot" title="Mensagem nova"></span>' : ''}</div>
+   <h3>${lancTitulo(l)}</h3><div class="meta">Peso médio ${pesoTxt(l)}</div>
+   <div class="row"><span class="meta">${brl(l.valor)} por @</span><span class="price">${brl0(total(l))}</span></div>
+   ${lado === 'adm' ? `<div class="meta">${comp ? 'Comprador: <b>' + esc(comp.nome) + '</b>' : pedidos ? pedidos + ' comprador(es) conversando' : 'Sem comprador ainda'}${c.lucro != null ? ' · Lucro: <b>' + lucroHtml(c.lucro) + '</b>' : ''}</div>` : ''}</button>`;
+}
+
+// ---------- comprador ----------
+TELAS.naoComprador = () => {
+  if (!E.carregado) return `<div class="login"><img src="${ICON}" alt="Rede do Boi"><p class="slogan">Carregando os lotes...</p></div>`;
+  return `<div class="login"><img src="${ICON}" alt="Rede do Boi"><h2 class="sec" style="text-align:center">Área do comprador</h2>
+  <p class="meta" style="text-align:center;font-size:14px">O telefone <b>${esc(foneBonito(E.usuario.fone))}</b> ainda não está liberado para ver os lotes.<br>Fale com a Rede do Boi para fazer o seu cadastro de comprador.</p>
+  ${WA ? `<a class="wa" href="${waLink(WA, 'Olá, quero me cadastrar como comprador de gado na Rede do Boi. Meu telefone: ' + foneBonito(E.usuario.fone))}" target="_blank" rel="noopener">Pedir cadastro pelo WhatsApp</a>` : ''}
+  <button class="ghost" data-a="tentarDeNovo" style="width:100%">Já fui cadastrado, tentar de novo</button>
+  <button class="ghost" data-a="sair" style="width:100%">Usar outro telefone</button></div>`;
+};
+
+let abaComp = 'venda';
+TELAS.compLotes = () => {
+  const c = E.comprador, meus = E.lotesComp.filter(meuLote), venda = E.lotesComp.filter(l => !meuLote(l) && ['disponivel', 'reservado'].includes(l.status));
+  const ls = abaComp === 'meus' ? meus : venda;
+  return `<header class="bar"><img src="${ICON}" alt="" style="width:34px;height:34px;border-radius:9px"><h1>Lotes à venda</h1><span class="who">${esc((c.nome || '').split(' ')[0])}</span>${botaoSino()}</header><div class="body">
+  ${c.previa ? '<p class="note"><b>Prévia do administrador:</b> é assim que os compradores cadastrados veem os lotes. Para comprar ou perguntar, entre com o telefone de um comprador.</p>' : ''}
+  <div class="chips"><button class="chip" data-aba="venda" aria-pressed="${abaComp === 'venda'}">À venda <small>${venda.length}</small></button><button class="chip" data-aba="meus" aria-pressed="${abaComp === 'meus'}">Minhas compras <small>${meus.length}</small></button></div>
+  ${!E.carregado && !E.lotesComp.length ? '<div class="empty">Carregando...</div>' : ls.length ? ls.map(l => cartaoLote(l, 'comp')).join('')
+    : `<div class="empty">${abaComp === 'meus' ? 'Você ainda não confirmou a compra de nenhum lote.' : 'Nenhum lote à venda agora. Volte em breve: os novos lotes aparecem aqui.'}</div>`}
+  ${WA ? `<a class="wa" href="${waLink(WA, `Olá, sou ${c.nome}, comprador cadastrado na Rede do Boi.`)}" target="_blank" rel="noopener">Falar com a Rede do Boi no WhatsApp</a>` : ''}
+  <button class="ghost" data-a="sair" style="width:100%">Sair</button></div>`;
+};
+
+TELAS.compLote = id => {
+  const l = E.lotesComp.find(x => x.id === id);
+  if (!l) return topo('Lote') + '<div class="empty">Este lote não está mais disponível.</div>';
+  const c = E.comprador, meu = meuLote(l), ms = msgsLote(l);
+  return `${topo(lancTitulo(l))}<div class="body">
+  <div class="row"><span>${seloLote(l, meu)}</span><span class="meta">Lote de ${fd(l.criado_em)}</span></div>
+  ${galeria(l, true)}
+  <dl class="kv"><dt>Animais</dt><dd>${num(l.qtd)} × ${CAT[l.cat] || l.cat}</dd><dt>Peso médio</dt><dd>${pesoTxt(l)}</dd><dt>Valor da @</dt><dd>${brl(l.valor)}</dd><dt>Total do lote</dt><dd>${brl0(total(l))}</dd></dl>
+  ${l.descr ? `<h2 class="sec">Sobre o lote</h2><p class="descr">${esc(l.descr).replace(/\n/g, '<br>')}</p>` : ''}
+  ${l.status === 'disponivel' ? '<button class="cta green" data-a="queroLote">Quero comprar este lote</button>'
+    : meu && l.status === 'reservado' ? '<p class="note"><b>Lote reservado para você.</b> A Rede do Boi vai entrar em contato para combinar o pagamento e a retirada.</p>'
+    : meu ? `<p class="note">Situação da sua compra: <b>${LST[l.status]}</b>.</p>`
+    : '<p class="note">Este lote está reservado para outro comprador. Se o negócio não fechar, ele volta a ficar à venda. Você pode deixar uma pergunta.</p>'}
+  <h2 class="sec">Perguntas sobre o lote</h2>
+  ${ms.length ? conversaLote(ms, 'comp') : '<p class="meta" style="margin:0">Tem alguma dúvida? Pergunte aqui. A Rede do Boi responde pelo app.</p>'}
+  <form id="f-cperg" class="reply"><textarea id="cp-txt" rows="2" placeholder="Escreva sua pergunta" aria-label="Pergunta sobre o lote"></textarea><button class="cta green" style="width:auto" type="submit">Enviar</button></form>
+  ${WA ? `<a class="wa" href="${waLink(WA, `Olá, sou ${c.nome}, comprador cadastrado. Tenho interesse no lote de ${lancTitulo(l)} (peso médio ${pesoTxt(l)}, ${brl(l.valor)}/@).`)}" target="_blank" rel="noopener">Falar no WhatsApp da Rede do Boi</a>` : ''}
+  </div>`;
+};
+
+// ---------- administrador: lotes para revenda ----------
+let filtroRev = 'todos';
+TELAS.admRevenda = () => {
+  const todos = E.adm.lotes, cnt = f => todos.filter(f).length;
+  const ls = todos.filter(l => filtroRev === 'todos' ? l.status !== 'cancelado' : filtroRev === 'vendidos' ? VENDIDOS.includes(l.status) : l.status === filtroRev)
+    .sort((a, b) => (lotesNovosAdm().includes(b) - lotesNovosAdm().includes(a)) || String(b.criado_em).localeCompare(String(a.criado_em)));
+  const lucro = todos.filter(l => VENDIDOS.includes(l.status)).reduce((s, l) => s + (contas(l).lucro || 0), 0);
+  const fs = [['todos', 'Todos', cnt(l => l.status !== 'cancelado')], ['disponivel', 'À venda', cnt(l => l.status === 'disponivel')], ['reservado', 'Reservados', cnt(l => l.status === 'reservado')],
+    ['vendidos', 'Vendidos', cnt(l => VENDIDOS.includes(l.status))], ['no_pasto', 'No pasto', cnt(l => l.status === 'no_pasto')], ['entregue', 'Entregues', cnt(l => l.status === 'entregue')], ['cancelado', 'Cancelados', cnt(l => l.status === 'cancelado')]];
+  return `${topo('Lotes para revenda', true)}<div class="body">
+  <div class="stats"><div class="stat"><div class="v">${cnt(l => l.status === 'disponivel')}</div><div class="k">À venda</div></div><div class="stat"><div class="v">${cnt(l => l.status === 'reservado')}</div><div class="k">Reservados</div></div>
+  <div class="stat"><div class="v">${cnt(l => VENDIDOS.includes(l.status))}</div><div class="k">Vendidos</div></div><div class="stat"><div class="v">${brl0(lucro)}</div><div class="k">Lucro dos vendidos</div></div></div>
+  <button class="cta green" data-a="novoLoteRev">+ Novo lote para venda</button>
+  <div class="chips">${fs.map(([k, v, n]) => `<button class="chip" data-fr="${k}" aria-pressed="${filtroRev === k}">${v} <small>${n}</small></button>`).join('')}</div>
+  ${ls.length ? ls.map(l => cartaoLote(l, 'adm')).join('') : '<div class="empty">Nenhum lote neste filtro.</div>'}
+  <div class="admbtns">
+  <button class="cta" data-a="relRevenda">Relatório da revenda</button>
+  <button class="ghost" data-a="admCompradores">Compradores cadastrados (${E.adm.compradores.length})</button>
+  <button class="ghost" data-a="copiarLink">Copiar o link dos compradores</button>
+  <a class="ghost" href="${esc(linkComprador())}" target="_blank" rel="noopener" style="text-align:center">Ver como o comprador vê</a></div></div>`;
+};
+
+TELAS.admRevLote = id => {
+  const l = E.adm.lotes.find(x => x.id === id);
+  if (!l) return topo('Lote') + '<div class="empty">Lote não encontrado.</div>';
+  const c = contas(l), comp = umSo(l.comprador) || compradorDe(l.comprador_id), ms = msgsLote(l);
+  const porComp = new Map(); ms.forEach(m => { if (!porComp.has(m.comprador_id)) porComp.set(m.comprador_id, []); porComp.get(m.comprador_id).push(m); });
+  const ultimo = [...ms].reverse().find(m => m.papel === 'comp'), alvo = (ultimo && ultimo.comprador_id) || l.comprador_id || '';
+  const origem = l.origem_lanc && E.adm.lancs.find(x => x.id === l.origem_lanc);
+  return `${topo(lancTitulo(l))}<div class="body">
+  <div class="row"><span>${seloLote(l)}${l.visivel ? '' : ' <span class="pill p-cancelado">Escondido dos compradores</span>'}</span><button class="ghost" data-a="editarLoteRev">Editar lote</button></div>
+  ${galeria(l, true)}
+  <dl class="kv"><dt>Animais</dt><dd>${num(l.qtd)} × ${CAT[l.cat] || l.cat}</dd><dt>Peso médio</dt><dd>${pesoTxt(l)}</dd><dt>Preço pedido</dt><dd>${brl(l.valor)}/@</dd><dt>Total pelo preço pedido</dt><dd>${brl0(total(l))}</dd>
+   <dt>Lançado em</dt><dd>${fd(l.criado_em)}</dd>${l.vendido_em ? `<dt>Vendido em</dt><dd>${fd(l.vendido_em)}</dd>` : ''}</dl>
+  ${l.descr ? `<p class="descr">${esc(l.descr).replace(/\n/g, '<br>')}</p>` : ''}
+  ${origem ? `<p class="meta" style="margin:0">Gado comprado de <button class="lnk" data-abrir="${origem.id}">${esc((origem.perfil || {}).nome || 'produtor')}</button> em ${fd(origem.criado_em)}.</p>` : ''}
+  <h2 class="sec">Valores da negociação <span class="opt">(só administradores veem)</span></h2>
+  <dl class="kv fin"><dt>Valor pago pelo gado</dt><dd>${c.pago == null ? '–' : brl0(c.pago)}</dd><dt>Despesas</dt><dd>${c.desp == null ? '–' : brl0(c.desp)}</dd><dt>Valor vendido</dt><dd>${c.vend == null ? '–' : brl0(c.vend)}</dd></dl>
+  <div class="total"><span>Lucro da negociação${c.vend == null ? '<br><span class="meta">Informe o valor vendido em Editar lote</span>' : ''}</span><b class="price">${lucroHtml(c.lucro)}</b></div>
+  <h2 class="sec">Situação</h2>
+  <form id="f-rst" class="two"><label for="rs-st">Status<select id="rs-st">${Object.entries(LST).map(([k, v]) => `<option value="${k}" ${l.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+   <label for="rs-comp">Comprador<select id="rs-comp"><option value="">Nenhum</option>${E.adm.compradores.map(x => `<option value="${x.id}" ${l.comprador_id === x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select></label>
+   <label for="rs-vend" style="grid-column:1/-1">Valor vendido (R$, total recebido do comprador)<input id="rs-vend" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(c.vend ?? '')}" placeholder="Pelo preço pedido: ${Math.round(total(l))}"></label>
+   <button class="ghost" type="submit" style="grid-column:1/-1">Salvar situação</button></form>
+  ${comp ? `<div class="item"><h3>${esc(comp.nome)}</h3><div class="meta">${esc([comp.cidade, foneBonito(comp.fone)].filter(Boolean).join(' · '))}</div>
+   <a class="wa" href="${waLink(comp.fone, `Olá ${(comp.nome || '').split(' ')[0]}, aqui é da Rede do Boi, sobre o lote de ${lancTitulo(l)}.`)}" target="_blank" rel="noopener">Chamar comprador no WhatsApp</a></div>` : ''}
+  <h2 class="sec">Perguntas e pedidos dos compradores</h2>
+  ${porComp.size ? [...porComp].map(([cid, m]) => { const x = compradorDe(cid) || {}; return `<div class="item"><div class="row"><h3>${esc(x.nome || m[0].autor_nome || 'Comprador')}</h3>${m.some(y => y.quer_comprar) ? '<span class="pill pl-reservado">Quer comprar</span>' : ''}</div>${conversaLote(m, 'adm')}</div>`; }).join('')
+    : '<div class="empty">Nenhum comprador perguntou ainda.</div>'}
+  ${E.adm.compradores.length ? `<form id="f-rresp"><label for="rr-comp">Mandar mensagem para<select id="rr-comp">${E.adm.compradores.map(x => `<option value="${x.id}" ${alvo === x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select></label>
+   <label for="rr-txt">Mensagem<textarea id="rr-txt" rows="3" placeholder="Escreva para o comprador"></textarea></label>
+   <button class="cta green" type="submit">Enviar ao comprador</button></form>` : '<p class="note">Cadastre compradores para eles verem este lote.</p>'}
+  </div>`;
+};
+
+TELAS.admRevForm = id => {
+  const d = rascunho; if (!d) return topo('Lote') + '<div class="empty">Nada para editar.</div>';
+  const f = d.fin, sug = total({ qtd: d.qtd, peso: d.peso, un: d.un, valor: d.valor });
+  return `${topo(id ? 'Editar lote' : 'Novo lote para venda')}<div class="body"><form id="f-rev" novalidate>
+  <h2 class="sec">Tipo de animal</h2>
+  <div class="cats">${CATS.map(([k, v]) => `<button type="button" data-rcat="${k}" aria-pressed="${d.cat === k}">${v}</button>`).join('')}</div>
+  <div class="two"><label for="rv-qtd">Quantidade (cabeças)<input id="rv-qtd" type="number" inputmode="numeric" min="1" step="1" required value="${esc(d.qtd ?? '')}"></label>
+  <label for="rv-peso">Peso médio<span style="display:flex;gap:6px;min-width:0"><input style="flex:1" id="rv-peso" type="number" inputmode="decimal" min="0.5" step="0.1" required value="${esc(d.peso ?? '')}"><select id="rv-un" aria-label="Unidade" style="width:66px;flex:none;padding:10px 4px">${['@', 'kg'].map(u => `<option ${(d.un || '@') === u ? 'selected' : ''}>${u}</option>`).join('')}</select></span></label></div>
+  <label for="rv-valor">Valor da @ para venda (R$)<input id="rv-valor" type="number" inputmode="decimal" min="0" step="0.01" required value="${esc(d.valor ?? '')}"></label>
+  <div class="total"><span>Total do lote<br><span class="meta" id="rv-conv">${d.peso ? pesoTxt({ peso: d.peso, un: d.un || '@' }) + ' por cabeça' : '1 @ = 30 kg (peso vivo)'}</span></span><b class="price" id="rv-total">${brl0(sug)}</b></div>
+  <label for="rv-desc">Descrição do lote<textarea id="rv-desc" rows="4" placeholder="Ex.: Nelore, 30 meses, vacinados, prontos para abate. Retirada na fazenda, km 40 da vicinal.">${esc(d.descr)}</textarea></label>
+  <label>Fotos e vídeos do lote</label>
+  <div class="media">${d.midias.map((m, i) => `<div class="m">${m.kind === 'video' ? `<video src="${esc(urlMidia(m))}#t=0.1" muted preload="metadata"></video><span class="play">▶</span>` : `<img src="${esc(urlMidia(m))}" alt="Foto ${i + 1}">`}<button type="button" class="x" data-rrm="${i}" aria-label="Remover">×</button></div>`).join('')}
+   <label class="addm" for="rv-cam">📷<br>Tirar foto<input id="rv-cam" type="file" accept="image/*" capture="environment"></label>
+   <label class="addm" for="rv-vid">🎥<br>Gravar vídeo<input id="rv-vid" type="file" accept="video/*" capture="environment"></label>
+   <label class="addm" for="rv-file">＋<br>Da galeria<input id="rv-file" type="file" accept="image/*,video/*" multiple></label></div>
+  <label class="sw" for="rv-vis" style="flex-direction:row"><input id="rv-vis" type="checkbox" ${d.visivel ? 'checked' : ''}> Mostrar este lote para os compradores</label>
+  <h2 class="sec">Situação</h2>
+  <div class="two"><label for="rv-st">Status<select id="rv-st">${Object.entries(LST).map(([k, v]) => `<option value="${k}" ${d.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+  <label for="rv-comp">Comprador<select id="rv-comp"><option value="">Nenhum</option>${E.adm.compradores.map(x => `<option value="${x.id}" ${d.comprador_id === x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select></label></div>
+  <h2 class="sec">Valores da negociação <span class="opt">(só administradores veem)</span></h2>
+  <label for="rv-pago">Valor pago pelo gado (R$, total do lote)<input id="rv-pago" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.valor_pago ?? '')}"></label>
+  <label for="rv-desp">Despesas (frete, pasto, vacina...) R$ <span class="opt">(opcional)</span><input id="rv-desp" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.despesas ?? '')}"></label>
+  <label for="rv-vend">Valor vendido (R$, total recebido do comprador)<input id="rv-vend" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.valor_vendido ?? '')}"></label>
+  <button type="button" class="lnk" id="rv-calc">Usar o total pelo valor da @: <span id="rv-sug">${brl0(sug)}</span></button>
+  <div class="total"><span>Lucro</span><b class="price" id="rv-lucro">${lucroHtml(contas({ fin: f }).lucro)}</b></div>
+  <label for="rv-obs">Anotações <span class="opt">(só administradores veem)</span><textarea id="rv-obs" rows="2" placeholder="Ex.: pagamento em 2 vezes, retirada dia 10">${esc(f.obs)}</textarea></label>
+  <button class="cta green" type="submit">${id ? 'Salvar lote' : 'Publicar lote'}</button>
+  ${id ? '<button type="button" class="ghost red" data-a="excluirLoteRev">Excluir lote</button>' : ''}
+  </form></div>`;
+};
+
+// ---------- administrador: compradores ----------
+let buscaComp = '';
+TELAS.admCompradores = () => {
+  const q = norm(buscaComp), cs = E.adm.compradores.filter(c => !q || norm([c.nome, c.fone, c.cidade, c.documento].join(' ')).includes(q));
+  return `${topo('Compradores')}<div class="body">
+  <p class="note">Só os compradores cadastrados aqui conseguem ver os lotes. Eles entram pelo link dos compradores, digitando o próprio telefone.</p>
+  <div class="item"><h3>Link dos compradores</h3><div class="meta" style="word-break:break-all">${esc(linkComprador())}</div><div class="btns"><button class="ghost" data-a="copiarLink">Copiar link</button></div></div>
+  <button class="cta green" data-a="novoComprador">+ Cadastrar comprador</button>
+  ${E.adm.compradores.length > 5 ? `<label for="cb-busca">Buscar<input id="cb-busca" type="search" placeholder="Nome, telefone, cidade..." value="${esc(buscaComp)}"></label>` : ''}
+  ${cs.map(c => { const n = E.adm.lotes.filter(l => l.comprador_id === c.id && VENDIDOS.includes(l.status)).length;
+    return `<div class="item"><div class="row"><h3>${esc(c.nome)}</h3>${c.ativo ? '<span class="pill p-fechado">Liberado</span>' : '<span class="pill p-cancelado">Bloqueado</span>'}</div>
+    <div class="meta">${esc(foneBonito(c.fone))}${c.cidade ? ' · ' + esc(c.cidade) : ''}${c.documento ? ' · ' + esc(c.documento) : ''} · ${n} lote(s) comprado(s)</div>${c.obs ? `<div class="meta">${esc(c.obs)}</div>` : ''}
+    <div class="btns"><button class="ghost" data-ec="${c.id}">Editar</button><a class="ghost" href="${waLink(c.fone, `Olá ${(c.nome || '').split(' ')[0]}, aqui é da Rede do Boi. Veja os lotes de gado à venda neste link: ${linkComprador()} (entre com este número de telefone).`)}" target="_blank" rel="noopener">Enviar link pelo WhatsApp</a></div></div>`; }).join('') || '<div class="empty">Nenhum comprador cadastrado ainda.</div>'}
+  </div>`;
+};
+TELAS.admComprador = id => {
+  const d = rascunho;
+  return `${topo(id ? 'Editar comprador' : 'Novo comprador')}<div class="body"><form id="f-comp">
+  <label for="cb-nome">Nome do comprador ou empresa<input id="cb-nome" required maxlength="80" value="${esc(d.nome)}" placeholder="Ex.: Frigorífico São José"></label>
+  <label for="cb-fone">Telefone / WhatsApp com DDD<input id="cb-fone" type="tel" inputmode="tel" required value="${esc(d.fone ? foneBonito(d.fone) : '')}" placeholder="(69) 99999-9999"></label>
+  <p class="meta" style="margin:0">É com este telefone que o comprador entra no link para ver os lotes.</p>
+  <div class="two"><label for="cb-cid">Cidade <span class="opt">(opcional)</span><input id="cb-cid" value="${esc(d.cidade)}"></label>
+  <label for="cb-doc">CPF ou CNPJ <span class="opt">(opcional)</span><input id="cb-doc" value="${esc(d.documento)}"></label></div>
+  <label for="cb-obs">Anotações <span class="opt">(opcional)</span><textarea id="cb-obs" rows="2" placeholder="Ex.: compra boi gordo, paga à vista">${esc(d.obs)}</textarea></label>
+  <label class="sw" for="cb-at" style="flex-direction:row"><input id="cb-at" type="checkbox" ${d.ativo ? 'checked' : ''}> Liberado para ver os lotes</label>
+  <button class="cta green" type="submit">${id ? 'Salvar comprador' : 'Cadastrar comprador'}</button>
+  ${id ? '<button type="button" class="ghost red" data-a="excluirComprador">Excluir comprador</button>' : ''}</form></div>`;
+};
+
+// ---------- relatório da revenda ----------
+let filtroRelRev = { de: '', ate: '', st: 'todos', ver: 'lote' };
+const dataLote = l => String(l.vendido_em || l.criado_em).slice(0, 10);
+function linhasRevenda() {
+  const f = filtroRelRev;
+  return E.adm.lotes.filter(l => { const d = dataLote(l);
+    return (!f.de || d >= f.de) && (!f.ate || d <= f.ate) && (f.st === 'todos' || (f.st === 'vendidos' ? VENDIDOS.includes(l.status) : l.status === f.st)); })
+    .sort((a, b) => dataLote(b).localeCompare(dataLote(a)));
+}
+function somarRev(ls) {
+  const t = { lotes: ls.length, cab: 0, vendidos: 0, cabVend: 0, pago: 0, desp: 0, vend: 0, lucro: 0 };
+  for (const l of ls) { const c = contas(l); if (c.vend != null) t.temVend = true; t.cab += Number(l.qtd) || 0; t.pago += c.pago || 0; t.desp += c.desp || 0; t.vend += c.vend || 0; t.lucro += c.lucro || 0;
+    if (VENDIDOS.includes(l.status)) { t.vendidos++; t.cabVend += Number(l.qtd) || 0; } }
+  return t;
+}
+const nomeComp = l => (umSo(l.comprador) || compradorDe(l.comprador_id) || {}).nome || '';
+TELAS.relRevenda = () => {
+  const ls = linhasRevenda(), T = somarRev(ls), f = filtroRelRev;
+  const linha = l => { const c = contas(l); return `<tr data-rl="${l.id}"><td>${fd(dataLote(l) + 'T12:00')}</td><td>${lancTitulo(l)}, ${pesoTxt(l)}</td><td>${esc(nomeComp(l)) || '–'}</td><td>${LST[l.status]}</td><td class="r">${c.pago == null ? '–' : brl0(c.pago)}</td><td class="r">${c.desp == null ? '–' : brl0(c.desp)}</td><td class="r">${c.vend == null ? '–' : brl0(c.vend)}</td><td class="r">${lucroHtml(c.lucro)}</td></tr>`; };
+  const cab = '<tr><th>Data</th><th>Lote</th><th>Comprador</th><th>Status</th><th class="r">Valor pago</th><th class="r">Despesas</th><th class="r">Valor vendido</th><th class="r">Lucro</th></tr>';
+  const tot = (x, rot) => `<tr class="tot"><td colspan="4">${rot}</td><td class="r">${brl0(x.pago)}</td><td class="r">${brl0(x.desp)}</td><td class="r">${brl0(x.vend)}</td><td class="r">${lucroHtml(x.lucro)}</td></tr>`;
+  let corpo;
+  if (f.ver === 'comp') {
+    const g = new Map(); ls.forEach(l => { const k = l.comprador_id || ''; if (!g.has(k)) g.set(k, []); g.get(k).push(l); });
+    const gs = [...g].map(([k, x]) => ({ k, nome: k ? nomeComp(x[0]) || 'Comprador' : 'Sem comprador', ls: x, t: somarRev(x) })).sort((a, b) => (!a.k) - (!b.k) || b.t.vend - a.t.vend);
+    corpo = `<h2 class="sec">Resumo por comprador</h2><div class="tbl"><table><thead><tr><th>Comprador</th><th class="r">Lotes</th><th class="r">Cabeças</th><th class="r">Valor pago</th><th class="r">Despesas</th><th class="r">Valor vendido</th><th class="r">Lucro</th></tr></thead><tbody>
+      ${gs.map(x => `<tr><td>${esc(x.nome)}</td><td class="r">${x.t.lotes}</td><td class="r">${num(x.t.cab)}</td><td class="r">${brl0(x.t.pago)}</td><td class="r">${brl0(x.t.desp)}</td><td class="r">${brl0(x.t.vend)}</td><td class="r">${lucroHtml(x.t.lucro)}</td></tr>`).join('')}
+      <tr class="tot"><td>Total geral</td><td class="r">${T.lotes}</td><td class="r">${num(T.cab)}</td><td class="r">${brl0(T.pago)}</td><td class="r">${brl0(T.desp)}</td><td class="r">${brl0(T.vend)}</td><td class="r">${lucroHtml(T.lucro)}</td></tr></tbody></table></div>
+      ${gs.map(x => `<div class="item grupo"><div class="row"><h3>${esc(x.nome)}</h3><span class="price">${brl0(x.t.vend)}</span></div><div class="tbl"><table><thead>${cab}</thead><tbody>${x.ls.map(linha).join('')}${tot(x.t, 'Total')}</tbody></table></div></div>`).join('')}`;
+  } else corpo = `<div class="tbl"><table><thead>${cab}</thead><tbody>${ls.map(linha).join('') || '<tr><td colspan="8">Nenhum lote no período.</td></tr>'}${ls.length ? tot(T, 'Total geral') : ''}</tbody></table></div>`;
+  return `${topo('Relatório da revenda')}<div class="body">
+  <form id="f-relrev" class="filtros"><label for="rr-de">De<input id="rr-de" type="date" value="${f.de}"></label><label for="rr-ate">Até<input id="rr-ate" type="date" value="${f.ate}"></label>
+  <label for="rr-st">Status<select id="rr-st"><option value="todos">Todos</option><option value="vendidos" ${f.st === 'vendidos' ? 'selected' : ''}>Vendidos (todos)</option>${Object.entries(LST).map(([k, v]) => `<option value="${k}" ${f.st === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label></form>
+  <div class="stats"><div class="stat"><div class="v">${T.lotes}</div><div class="k">Lotes</div></div><div class="stat"><div class="v">${T.vendidos}</div><div class="k">Lotes vendidos</div></div>
+  <div class="stat"><div class="v">${num(T.cabVend)}</div><div class="k">Cabeças vendidas</div></div><div class="stat"><div class="v">${brl0(T.vend)}</div><div class="k">Valor vendido</div></div></div>
+  <dl class="kv fin"><dt>Valor pago pelo gado</dt><dd>${brl0(T.pago)}</dd><dt>Despesas</dt><dd>${brl0(T.desp)}</dd><dt>Valor vendido</dt><dd>${brl0(T.vend)}</dd></dl>
+  <div class="total"><span>Lucro no período<br><span class="meta">Valor vendido − valor pago − despesas (lotes com valor vendido)</span></span><b class="price">${lucroHtml(T.lucro)}</b></div>
+  <div class="chips" role="group" aria-label="Agrupar">${[['lote', 'Por lote'], ['comp', 'Por comprador']].map(([k, v]) => `<button class="chip" data-vr="${k}" aria-pressed="${f.ver === k}">${v}</button>`).join('')}</div>
+  <div class="btns"><button class="ghost" data-a="planilhaRevenda">Baixar planilha (Excel)</button><button class="ghost" data-a="imprimir">Imprimir ou salvar PDF</button></div>
+  ${corpo}</div>`;
+};
+function planilhaRevenda() {
+  const ls = linhasRevenda(), n = v => v == null || v === '' ? '' : String(Math.round(Number(v) * 100) / 100).replace('.', ',');
+  const cab = ['Data', 'Animal', 'Quantidade', 'Peso médio', 'Unidade', 'Preço pedido R$/@', 'Status', 'Comprador', 'Telefone do comprador', 'Valor pago R$', 'Despesas R$', 'Valor vendido R$', 'Lucro R$', 'Anotações'];
+  const linhaDe = l => { const c = contas(l), cp = umSo(l.comprador) || compradorDe(l.comprador_id) || {};
+    return [fd(dataLote(l) + 'T12:00'), CAT[l.cat], l.qtd, n(l.peso), l.un, n(l.valor), LST[l.status], cp.nome || '', cp.fone ? foneBonito(cp.fone) : '', n(c.pago), n(c.desp), n(c.vend), n(c.lucro), finDe(l).obs || '']; };
+  const totalLinha = (rot, t) => { const r = new Array(cab.length).fill(''); r[0] = rot; r[2] = t.cab; r[9] = n(t.pago); r[10] = n(t.desp); r[11] = t.temVend ? n(t.vend) : ''; r[12] = t.temVend ? n(t.lucro) : ''; return r; };
+  let linhas = [];
+  if (filtroRelRev.ver === 'comp') {
+    const g = new Map(); ls.forEach(l => { const k = l.comprador_id || ''; if (!g.has(k)) g.set(k, []); g.get(k).push(l); });
+    for (const [k, x] of g) { x.forEach(l => linhas.push(linhaDe(l))); linhas.push(totalLinha('TOTAL COMPRADOR: ' + (k ? nomeComp(x[0]) : 'Sem comprador'), somarRev(x))); linhas.push(new Array(cab.length).fill('')); }
+  } else linhas = ls.map(linhaDe);
+  linhas.push(totalLinha('TOTAL GERAL', somarRev(ls)));
+  const csv = '﻿' + [cab, ...linhas].map(r => r.map(c => { c = String(c ?? ''); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `rede-do-boi-revenda${filtroRelRev.ver === 'comp' ? '-por-comprador' : ''}-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---------- ações da revenda ----------
+function abrirLoteRev(id) {
+  const l = E.adm.lotes.find(x => x.id === id);
+  if (l && (l.lote_mensagens || []).some(m => m.adm_novo) && navigator.onLine) { l.lote_mensagens.forEach(m => m.adm_novo = false); api.loteLidoAdmin(id).catch(() => {}); }
+  ir('admRevLote', id);
+}
+function abrirLoteComp(id) {
+  const l = E.lotesComp.find(x => x.id === id);
+  if (l && (l.lote_mensagens || []).some(m => m.comp_novo) && navigator.onLine && !E.comprador.previa) { l.lote_mensagens.forEach(m => m.comp_novo = false); api.loteLido(id).catch(() => {}); }
+  ir('compLote', id);
+}
+function novoLoteRev(base = {}) {
+  rascunho = { id: novoId(), cat: null, qtd: '', peso: '', un: '@', valor: '', descr: '', midias: [], status: 'disponivel', visivel: true, comprador_id: '', origem_lanc: null, vendido_em: null,
+    fin: { valor_pago: '', despesas: '', valor_vendido: '', obs: '' }, novo: true, ...base };
+  ir('admRevForm', null);
+}
+function guardarRev() {
+  const d = rascunho, v = id => F(id) ? F(id).value : undefined; if (!d || !F('rv-qtd')) return;
+  Object.assign(d, { qtd: v('rv-qtd'), peso: v('rv-peso'), un: v('rv-un'), valor: v('rv-valor'), descr: v('rv-desc').trim(), visivel: F('rv-vis').checked, status: v('rv-st'), comprador_id: v('rv-comp') });
+  Object.assign(d.fin, { valor_pago: v('rv-pago'), despesas: v('rv-desp'), valor_vendido: v('rv-vend'), obs: v('rv-obs').trim() });
+}
+async function copiarLink() {
+  const link = linkComprador();
+  try { await navigator.clipboard.writeText(link); aviso('Link copiado. Envie para os compradores cadastrados.'); }
+  catch (e) { caixa('Link dos compradores', link, 'OK', null, true); }
+}
+async function salvarLoteRev() {
+  guardarRev(); const d = rascunho;
+  const qtd = parseInt(d.qtd, 10), peso = nv(d.peso), valor = nv(d.valor);
+  if (!d.cat) return aviso('Escolha o tipo de animal.');
+  if (!(qtd > 0 && peso > 0 && valor != null && valor >= 0)) return aviso('Preencha quantidade, peso médio e valor da @.');
+  if (VENDIDOS.includes(d.status) && !d.comprador_id && !E.adm.compradores.length) return aviso('Cadastre o comprador antes de marcar o lote como vendido.');
+  if (!exigeInternet()) return;
+  const bt = F('f-rev').querySelector('button[type=submit]'); bt.disabled = true; bt.textContent = 'Salvando...';
+  const ok = await tentar(async () => {
+    const midias = [];
+    for (const m of d.midias) {
+      if (!m.path && !m.demo) {
+        const blob = await arquivos.get(m.id); if (!blob) continue;
+        const ext = m.kind === 'video' ? (m.mime && m.mime.includes('quicktime') ? 'mov' : 'mp4') : 'jpg';
+        m.path = await api.enviarArquivo(`lotes/${d.id}/${m.id}.${ext}`, blob, m.mime || (m.kind === 'video' ? 'video/mp4' : 'image/jpeg'));
+      }
+      midias.push(m.demo ? { id: m.id, kind: m.kind, demo: m.demo } : { id: m.id, kind: m.kind, path: m.path });
+    }
+    const vendido = VENDIDOS.includes(d.status);
+    await api.salvarLote({ ...d, qtd, peso, valor, midias, vendido_em: vendido ? (d.vendido_em || new Date().toISOString()) : null },
+      { valor_pago: nv(d.fin.valor_pago), despesas: nv(d.fin.despesas), valor_vendido: nv(d.fin.valor_vendido), obs: d.fin.obs });
+    for (const m of d.midias) if (m.path) arquivos.del(m.id).catch(() => {});
+  }, d.novo ? (d.visivel ? 'Lote publicado. Os compradores já podem ver.' : 'Lote salvo (escondido dos compradores).') : 'Lote salvo.');
+  if (!ok) { bt.disabled = false; bt.textContent = d.novo ? 'Publicar lote' : 'Salvar lote'; return; }
+  const id = d.id, novo = d.novo; rascunho = null; limparDigitado(); await atualizar();
+  if (novo) { pilha[pilha.length - 1] = ['admRevLote', id]; pintar(true); } else voltar();
+}
+
+// =====================================================================
 // AÇÕES
 // =====================================================================
 const F = id => document.getElementById(id);
@@ -778,9 +1136,12 @@ function ligar(tela, arg) {
   app.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => abrirLanc(b.dataset.abrir));
   app.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { E.filtroAdm = b.dataset.f; pintar(); });
   app.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => {
-    const l = (E.visao === 'adm' ? E.adm.lancs : meusLancs()).find(x => x.id === arg); if (l) abrirVisor(l.midias, +b.dataset.ver);
+    const l = [...(E.visao === 'adm' ? E.adm.lancs : E.visao === 'prod' ? meusLancs() : []), ...E.adm.lotes, ...E.lotesComp].find(x => x.id === arg); if (l) abrirVisor(l.midias, +b.dataset.ver);
   });
   app.querySelectorAll('[data-camp]').forEach(b => b.onclick = () => ir('campanha', b.dataset.camp));
+  app.querySelectorAll('[data-rl]').forEach(b => b.onclick = () => abrirLoteRev(b.dataset.rl));
+  app.querySelectorAll('[data-cl]').forEach(b => b.onclick = () => abrirLoteComp(b.dataset.cl));
+  app.querySelectorAll('[data-ec]').forEach(b => b.onclick = () => { const c = E.adm.compradores.find(x => x.id === b.dataset.ec); rascunho = { ...c }; ir('admComprador', c.id); });
   app.querySelectorAll('[data-banner]').forEach(b => b.onclick = () => abrirBanner(b.dataset.banner));
   app.querySelectorAll('[data-parc]').forEach(b => b.onclick = e => { e.stopPropagation(); ir('parceiro', b.dataset.parc); });
   app.querySelectorAll('[data-ev]').forEach(b => b.onclick = () => { const v = E.vantagens.find(x => x.id === b.dataset.ev); rascunho = { ...v, ate: v.ate || '' }; ir('admVantagem', v.id); });
@@ -804,6 +1165,68 @@ function abrirBanner(id) {
 }
 
 const LIGAR = {
+  naoComprador() {},
+  compLotes() { app.querySelectorAll('[data-aba]').forEach(b => b.onclick = () => { abaComp = b.dataset.aba; pintar(true); }); },
+  compLote(id) {
+    F('f-cperg').onsubmit = async e => {
+      e.preventDefault(); const t = F('cp-txt').value.trim(); if (!t) return;
+      if (E.comprador.previa) return aviso('Prévia do administrador: para perguntar, entre com o telefone de um comprador.');
+      if (!exigeInternet()) return;
+      if (await tentar(() => api.msgLote({ id: novoId(), lote_id: id, comprador_id: E.comprador.id, papel: 'comp', texto: t }), 'Pergunta enviada. A Rede do Boi responde por aqui.')) { limparDigitado(); F('cp-txt').value = ''; await atualizar(); }
+    };
+  },
+  admRevenda() { app.querySelectorAll('[data-fr]').forEach(b => b.onclick = () => { filtroRev = b.dataset.fr; pintar(); }); },
+  admRevLote(id) {
+    const l = E.adm.lotes.find(x => x.id === id); if (!l) return;
+    F('f-rst').onsubmit = async e => {
+      e.preventDefault(); if (!exigeInternet()) return;
+      const st = F('rs-st').value, cid = F('rs-comp').value || null, f = finDe(l), vend = nv(F('rs-vend').value);
+      if ((st === 'reservado' || VENDIDOS.includes(st)) && !cid) return aviso('Escolha o comprador deste lote.');
+      const vendido = VENDIDOS.includes(st);
+      if (await tentar(() => api.salvarLote({ ...l, status: st, comprador_id: cid, vendido_em: vendido ? (l.vendido_em || new Date().toISOString()) : null },
+        { valor_pago: f.valor_pago ?? null, despesas: f.despesas ?? null, valor_vendido: vend, obs: f.obs || '' }), 'Situação salva.')) { limparDigitado(); await atualizar(); }
+    };
+    const fr = F('f-rresp'); if (fr) fr.onsubmit = async e => {
+      e.preventDefault(); if (!exigeInternet()) return;
+      const t = F('rr-txt').value.trim(), cid = F('rr-comp').value; if (!t) return aviso('Escreva a mensagem.');
+      if (await tentar(() => api.msgLote({ id: novoId(), lote_id: id, comprador_id: cid, papel: 'adm', texto: t }), 'Enviado. O comprador vê a resposta no app.')) { limparDigitado(); F('rr-txt').value = ''; await atualizar(); }
+    };
+  },
+  admRevForm() {
+    const conta = () => { guardarRev(); const d = rascunho, t = total({ qtd: d.qtd, peso: d.peso, un: d.un, valor: d.valor });
+      F('rv-total').textContent = brl0(t); F('rv-sug').textContent = brl0(t);
+      F('rv-conv').textContent = d.peso ? pesoTxt({ peso: d.peso, un: d.un || '@' }) + ' por cabeça' : '1 @ = 30 kg (peso vivo)';
+      F('rv-lucro').innerHTML = lucroHtml(contas({ fin: d.fin }).lucro); };
+    ['rv-qtd', 'rv-peso', 'rv-un', 'rv-valor', 'rv-pago', 'rv-desp', 'rv-vend'].forEach(id => F(id).oninput = conta);
+    F('rv-un').onchange = conta;
+    F('rv-calc').onclick = () => { guardarRev(); const d = rascunho; F('rv-vend').value = Math.round(total({ qtd: d.qtd, peso: d.peso, un: d.un, valor: d.valor }) * 100) / 100; F('rv-vend').dataset.sujo = 1; conta(); };
+    app.querySelectorAll('[data-rcat]').forEach(b => b.onclick = () => { guardarRev(); rascunho.cat = b.dataset.rcat; app.dataset.tela = ''; pintar(); });
+    app.querySelectorAll('[data-rrm]').forEach(b => b.onclick = () => { guardarRev(); rascunho.midias.splice(+b.dataset.rrm, 1); app.dataset.tela = ''; pintar(); });
+    ['rv-cam', 'rv-vid', 'rv-file'].forEach(id => F(id).onchange = async ev => {
+      guardarRev(); const files = [...ev.target.files]; ev.target.value = '';
+      for (const file of files) { const m = await guardarMidia(file); if (m) rascunho.midias.push(m); }
+      app.dataset.tela = ''; pintar();
+    });
+    F('f-rev').onsubmit = e => { e.preventDefault(); salvarLoteRev(); };
+  },
+  admCompradores() {
+    const bs = F('cb-busca'); if (bs) bs.oninput = () => { buscaComp = bs.value; app.dataset.tela = ''; pintar(); const n = F('cb-busca'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
+  },
+  admComprador(id) {
+    F('f-comp').onsubmit = async e => {
+      e.preventDefault(); const v = i => F(i).value.trim();
+      const c = { id: id || null, nome: v('cb-nome'), fone: foneNormal(v('cb-fone')), cidade: v('cb-cid'), documento: v('cb-doc'), obs: v('cb-obs'), ativo: F('cb-at').checked };
+      if (!c.nome) return aviso('Escreva o nome do comprador.');
+      if (!foneValido(c.fone)) return aviso('Digite o telefone com DDD. Ex.: (69) 99999-9999');
+      if (E.adm.compradores.some(x => x.fone === c.fone && x.id !== id)) return aviso('Já existe um comprador com este telefone.');
+      if (!exigeInternet()) return;
+      if (await tentar(() => api.salvarComprador(c), id ? 'Comprador salvo.' : 'Comprador cadastrado. Envie o link para ele.')) { rascunho = null; limparDigitado(); await atualizar(); voltar(); }
+    };
+  },
+  relRevenda() {
+    F('f-relrev').onchange = () => { filtroRelRev = { ...filtroRelRev, de: F('rr-de').value, ate: F('rr-ate').value, st: F('rr-st').value }; app.dataset.tela = ''; pintar(); };
+    app.querySelectorAll('[data-vr]').forEach(b => b.onclick = () => { filtroRelRev.ver = b.dataset.vr; pintar(true); });
+  },
   login() {
     F('f-login').onsubmit = async e => {
       e.preventDefault(); const fone = foneNormal(F('l-fone').value);
@@ -823,7 +1246,7 @@ const LIGAR = {
       const r = await api.entrarComSenha(fone, F('s-senha').value).catch(er => ({ erro: er }));
       if (r.erro) return aviso('Não foi possível entrar: ' + r.erro.message);
       if (!r.ok) return aviso('Senha incorreta.');
-      E.visao = 'adm'; await aposEntrar();
+      E.visao = MODO_COMPRADOR ? 'comp' : 'adm'; await aposEntrar();
     };
   },
   criarSenha() {
@@ -1000,7 +1423,7 @@ async function acao(a, arg) {
   if (a === 'novaVantagem') { rascunho = { titulo: '', desconto: '', descr: '', parceiro_id: arg && E.parceiros.some(p => p.id === arg) ? arg : '', img: null, ate: '', ativo: true }; return ir('admVantagem', null); }
   if (a === 'trocarVisao') { E.visao = E.visao === 'adm' ? 'prod' : 'adm'; return inicio(); }
   if (a === 'sair') return caixa('Sair desta conta?', E.fila.length ? 'Ainda há envios guardados neste aparelho. Eles serão enviados quando você entrar de novo com este telefone.' : 'Para entrar de novo é só digitar o telefone.', 'Sair', async () => {
-    await api.sair(); Object.assign(E, { usuario: null, perfil: null, lancs: [], adm: { lancs: [], banners: [], sugestoes: [], perfis: [] }, visao: 'prod', carregado: false }); inicio(); });
+    await api.sair(); Object.assign(E, { usuario: null, perfil: null, lancs: [], adm: { lancs: [], banners: [], sugestoes: [], perfis: [], compradores: [], lotes: [] }, comprador: null, lotesComp: [], visao: MODO_COMPRADOR ? 'comp' : 'prod', carregado: false }); inicio(); });
   if (a === 'editar') {
     const l = meusLancs().find(x => x.id === arg);
     rascunho = { ...JSON.parse(JSON.stringify(l)), editando: true, pendenteNovo: !!l.pendente }; return ir('lancar');
@@ -1024,6 +1447,38 @@ async function acao(a, arg) {
     if (exigeInternet() && await tentar(() => api.excluirVantagem(rascunho.id), 'Vantagem excluída.')) { rascunho = null; await atualizar(); voltar(); } });
   if (a === 'excluirParceiro') return caixa('Excluir este parceiro?', 'Ele sai da lista de parceiros. As vantagens dele continuam, mas ficam sem parceiro.', 'Excluir', async () => {
     if (exigeInternet() && await tentar(() => api.excluirParceiro(rascunho.id), 'Parceiro excluído.')) { rascunho = null; await atualizar(); voltar(); } });
+  if (['admRevenda', 'admCompradores', 'relRevenda'].includes(a)) return ir(a);
+  if (a === 'novoLoteRev') return novoLoteRev();
+  if (a === 'editarLoteRev') {
+    const l = E.adm.lotes.find(x => x.id === arg); if (!l) return; const f = finDe(l);
+    rascunho = { ...JSON.parse(JSON.stringify(l)), comprador_id: l.comprador_id || '', fin: { valor_pago: f.valor_pago ?? '', despesas: f.despesas ?? '', valor_vendido: f.valor_vendido ?? '', obs: f.obs || '' }, novo: false };
+    delete rascunho.lote_mensagens; delete rascunho.comprador; return ir('admRevForm', l.id);
+  }
+  if (a === 'excluirLoteRev') return caixa('Excluir este lote?', 'Ele some para os compradores e sai do relatório, junto com as perguntas e os valores. Se ele só não vai ser vendido, prefira mudar o status para Cancelado.', 'Excluir', async () => {
+    if (exigeInternet() && await tentar(() => api.excluirLote(rascunho.id), 'Lote excluído.')) { rascunho = null; await atualizar(); pilha = [[telaInicial()], ['admRevenda']]; pintar(true); } });
+  if (a === 'separarRevenda') {
+    const l = E.adm.lancs.find(x => x.id === arg); if (!l) return;
+    return novoLoteRev({ cat: l.cat, qtd: l.qtd, peso: l.peso, un: l.un || '@', valor: '', midias: JSON.parse(JSON.stringify(l.midias || [])), origem_lanc: l.id,
+      fin: { valor_pago: l.status === 'fechado' ? Math.round(valorFechado(l) * 100) / 100 : '', despesas: '', valor_vendido: '', obs: '' } });
+  }
+  if (a === 'novoComprador') { rascunho = { nome: '', fone: '', cidade: '', documento: '', obs: '', ativo: true }; return ir('admComprador', null); }
+  if (a === 'excluirComprador') return caixa('Excluir este comprador?', 'Ele perde o acesso aos lotes e as perguntas dele são apagadas. Os lotes comprados ficam sem comprador no relatório. Para só bloquear o acesso, desmarque "Liberado".', 'Excluir', async () => {
+    if (exigeInternet() && await tentar(() => api.excluirComprador(rascunho.id), 'Comprador excluído.')) { rascunho = null; await atualizar(); voltar(); } });
+  if (a === 'copiarLink') return copiarLink();
+  if (a === 'planilhaRevenda') return planilhaRevenda();
+  if (a === 'tentarDeNovo') { E.carregado = false; pintar(); await atualizar(); return inicio(); }
+  if (a === 'queroLote') {
+    const l = E.lotesComp.find(x => x.id === arg); if (!l) return;
+    if (E.comprador.previa) return aviso('Prévia do administrador: para comprar, entre com o telefone de um comprador.');
+    return caixa('Confirmar a compra deste lote?', `${lancTitulo(l)}, peso médio ${pesoTxt(l)}, ${brl(l.valor)}/@. Total estimado ${brl0(total(l))}. O lote fica reservado para você e a Rede do Boi entra em contato para combinar o pagamento e a retirada.`, 'Confirmar compra', async () => {
+      if (!exigeInternet()) return;
+      const ok = await tentar(() => api.msgLote({ id: novoId(), lote_id: l.id, comprador_id: E.comprador.id, papel: 'comp', texto: 'Quero comprar este lote.', quer_comprar: true }));
+      if (!ok) return; await atualizar();
+      const x = E.lotesComp.find(y => y.id === l.id);
+      if (x && meuLote(x)) caixa('Compra confirmada!', 'O lote está reservado para você. A Rede do Boi vai entrar em contato em breve para combinar o pagamento e a retirada.', 'OK', null, true);
+      else caixa('Outro comprador confirmou antes', 'Seu pedido ficou registrado. Se o negócio dele não fechar, a Rede do Boi entra em contato com você.', 'OK', null, true);
+    });
+  }
   if (a === 'baixarPlanilha') return baixarPlanilha();
   if (a === 'imprimir') return window.print();
 }
@@ -1090,8 +1545,9 @@ async function aposEntrar() {
   E.usuario = api.usuario();
   await lerCache(); await lerFila();
   if (navigator.onLine) await atualizar();
-  if (ehAdmin() && !pilha.some(p => p[0].startsWith('adm'))) E.visao = E.visao || 'adm';
-  if (!ehAdmin()) E.visao = 'prod';
+  if (MODO_COMPRADOR) E.visao = 'comp';
+  else if (ehAdmin() && !pilha.some(p => p[0].startsWith('adm'))) E.visao = E.visao || 'adm';
+  else if (!ehAdmin()) E.visao = 'prod';
   inicio();
   sincronizar();
 }
@@ -1110,7 +1566,7 @@ async function partida() {
   E.usuario = api.usuario();
   if (E.usuario) {
     await lerCache(); await lerFila();
-    if (ehAdmin()) E.visao = (await kv.get('visao').catch(() => null)) || 'adm';
+    if (ehAdmin() && !MODO_COMPRADOR) E.visao = (await kv.get('visao').catch(() => null)) || 'adm';
     inicio();
     if (navigator.onLine) { await atualizar(); if (!pilha.length || pilha.length === 1) inicio(); }
     sincronizar();
@@ -1119,7 +1575,7 @@ async function partida() {
 }
 partida();
 // lembra se o administrador estava no painel ou na área do produtor
-addEventListener('pagehide', () => { kv.set('visao', E.visao).catch(() => {}); });
+addEventListener('pagehide', () => { if (!MODO_COMPRADOR) kv.set('visao', E.visao).catch(() => {}); });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));

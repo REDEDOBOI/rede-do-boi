@@ -35,6 +35,7 @@ function checar(res) {
 
 const LANC_CAMPOS = ['tipo', 'cat', 'qtd', 'peso', 'un', 'valor', 'midias'];
 
+const faltaTabela = r => r.error && /relation|does not exist|schema cache|Could not find/i.test(r.error.message);
 // =====================================================================
 // Servidor Supabase
 // =====================================================================
@@ -139,6 +140,29 @@ function criarSupabase() {
       checar(await sb.storage.from('banners').upload(caminho, blob, { contentType: 'image/jpeg', cacheControl: '31536000' }));
       return caminho;
     },
+    // ----- revenda de lotes -----
+    async souComprador() { const r = await sb.from('compradores').select('*').eq('fone', api.usuario().fone).maybeSingle(); if (faltaTabela(r)) return null; return checar(r); },
+    async lotesComprador() { const r = await sb.from('lotes').select('*, lote_mensagens(*)').order('criado_em', { ascending: false }); if (faltaTabela(r)) return []; return checar(r); },
+    async msgLote(m) { checar(await sb.from('lote_mensagens').insert({ id: m.id, lote_id: m.lote_id, comprador_id: m.comprador_id, papel: m.papel, texto: m.texto, quer_comprar: !!m.quer_comprar })); },
+    async loteLido(id) { checar(await sb.rpc('lote_lido', { p_lote: id })); },
+    async compradores() { const r = await sb.from('compradores').select('*').order('nome'); if (faltaTabela(r)) return []; return checar(r); },
+    async salvarComprador(c) {
+      const linha = { fone: c.fone, nome: c.nome, cidade: c.cidade || null, documento: c.documento || null, obs: c.obs || null, ativo: !!c.ativo };
+      if (c.id) checar(await sb.from('compradores').update(linha).eq('id', c.id)); else checar(await sb.from('compradores').insert(linha));
+    },
+    async excluirComprador(id) { checar(await sb.from('compradores').delete().eq('id', id)); },
+    async lotesAdmin() {
+      const r = await sb.from('lotes').select('*, lote_mensagens(*), fin:lotes_financeiro(*), comprador:compradores(id, nome, fone, cidade)').order('criado_em', { ascending: false });
+      if (faltaTabela(r)) return []; return checar(r);
+    },
+    async salvarLote(l, fin) {
+      const linha = { id: l.id, cat: l.cat, qtd: l.qtd, peso: l.peso, un: l.un, valor: l.valor, descr: l.descr || null, midias: l.midias, status: l.status, visivel: !!l.visivel,
+        comprador_id: l.comprador_id || null, origem_lanc: l.origem_lanc || null, vendido_em: l.vendido_em || null, atualizado_em: new Date().toISOString() };
+      checar(await sb.from('lotes').upsert(linha, { onConflict: 'id' }));
+      checar(await sb.from('lotes_financeiro').upsert({ lote_id: l.id, valor_pago: fin.valor_pago ?? null, despesas: fin.despesas ?? null, valor_vendido: fin.valor_vendido ?? null, obs: fin.obs || null }, { onConflict: 'lote_id' }));
+    },
+    async excluirLote(id) { checar(await sb.from('lotes').delete().eq('id', id)); },
+    async loteLidoAdmin(id) { checar(await sb.from('lote_mensagens').update({ adm_novo: false }).eq('lote_id', id).eq('adm_novo', true)); },
     // parceiros e clube de vantagens (se a atualização 2 do banco ainda não rodou, volta vazio)
     async parceiros() { const r = await sb.from('parceiros').select('*').order('nome'); if (r.error && /relation|does not exist|schema cache/i.test(r.error.message)) return []; return checar(r); },
     async vantagens() { const r = await sb.from('vantagens').select('*').order('criado_em', { ascending: false }); if (r.error && /relation|does not exist|schema cache/i.test(r.error.message)) return []; return checar(r); },
@@ -166,6 +190,8 @@ function criarSupabase() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'lancamentos' }, avisar)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens' }, avisar)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'interesses' }, avisar)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'lotes' }, avisar)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'lote_mensagens' }, avisar)
         .subscribe();
     },
   };
@@ -223,6 +249,10 @@ function criarDemo() {
           descr: 'Compra coletiva de sal mineral para cria e engorda. Quanto mais produtores entrarem, melhor o preço. Retirada no Matupi ou entrega na vicinal.', ate: null, ativo: true, criado_em: atras(5) },
       ],
       interesses: [{ banner_id: 'b1', user_id: 'u2', novo: true, criado_em: atras(1, 16) }],
+      compradores: [{ id: 'c1', fone: '5569911112222', nome: 'Frigorífico Exemplo', cidade: 'Ji-Paraná', documento: '', obs: 'Compra boi gordo toda semana', ativo: true, criado_em: atras(6) }],
+      lotes: [{ id: 'e0000000-0000-4000-8000-000000000001', cat: 'boi_gordo', qtd: 40, peso: 19, un: '@', valor: 320, descr: 'Lote de boi gordo Nelore, 30 meses, pronto para abate. Retirada no Matupi.', midias: [{ id: 'fl1', kind: 'img', demo: 'icons/exemplo-lote.jpg' }], status: 'disponivel', visivel: true, comprador_id: null, origem_lanc: null, vendido_em: null, criado_em: atras(1), atualizado_em: atras(1) }],
+      fin: { 'e0000000-0000-4000-8000-000000000001': { lote_id: 'e0000000-0000-4000-8000-000000000001', valor_pago: 231800, despesas: 3500, valor_vendido: null, obs: '' } },
+      lmsgs: [],
       parceiros: [
         { id: 'p1', nome: 'Agropecuária Campo Forte (exemplo)', categoria: 'Agropecuária', oferece: 'Ração, sal mineral, arame, vacinas', descr: 'Entrega nas vicinais às terças e sextas.', fone: '5597999990001', endereco: 'Av. Principal, 100', mun: 'Apuí', img: null, ativo: true, criado_em: atras(10) },
         { id: 'p2', nome: 'Clínica Vet Rural (exemplo)', categoria: 'Veterinário', oferece: 'Atendimento na fazenda, exame andrológico, inseminação', descr: '', fone: '5597999990002', endereco: '', mun: 'Manicoré', img: null, ativo: true, criado_em: atras(10) },
@@ -341,6 +371,41 @@ function criarDemo() {
       rede(); const url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
       const c = 'b-' + novoId() + '.jpg'; S.arquivos[c] = url; mudou(); return c;
     },
+    // ----- revenda de lotes (demonstração) -----
+    async souComprador() { rede(); const f = this.usuario() && this.usuario().fone; const c = (S.compradores || []).find(x => x.fone === f && x.ativo); return c ? copia(c) : null; },
+    async lotesComprador() {
+      rede(); const c = await this.souComprador(); if (!c) return [];
+      return (S.lotes || []).filter(l => l.visivel && (['disponivel', 'reservado'].includes(l.status) || l.comprador_id === c.id))
+        .map(l => ({ ...copia(l), lote_mensagens: (S.lmsgs || []).filter(m => m.lote_id === l.id && m.comprador_id === c.id).map(copia) }));
+    },
+    async msgLote(m) {
+      rede(); S.lmsgs = S.lmsgs || []; const n = { id: m.id, lote_id: m.lote_id, papel: m.papel, texto: m.texto, quer_comprar: !!m.quer_comprar, criado_em: agora() };
+      if (m.papel === 'comp') { const c = await this.souComprador(); if (!c) throw new Error('sem permissão'); Object.assign(n, { comprador_id: c.id, autor_nome: c.nome, adm_novo: true, comp_novo: false });
+        const l = S.lotes.find(x => x.id === m.lote_id); if (m.quer_comprar && l.status === 'disponivel') { l.status = 'reservado'; l.comprador_id = c.id; } }
+      else { if (!ehAdmin()) throw new Error('sem permissão'); Object.assign(n, { comprador_id: m.comprador_id, autor_nome: nome(uid), adm_novo: false, comp_novo: true, quer_comprar: false }); }
+      S.lmsgs.push(n); mudou();
+    },
+    async loteLido(id) { rede(); const c = await this.souComprador(); (S.lmsgs || []).forEach(m => { if (m.lote_id === id && c && m.comprador_id === c.id) m.comp_novo = false; }); salvar(); },
+    async compradores() { rede(); return (S.compradores || []).map(copia).sort((a, b) => a.nome.localeCompare(b.nome)); },
+    async salvarComprador(c) {
+      rede(); S.compradores = S.compradores || []; if (S.compradores.some(x => x.fone === c.fone && x.id !== c.id)) throw new Error('Já existe um comprador com este telefone.');
+      const d = { fone: c.fone, nome: c.nome, cidade: c.cidade, documento: c.documento, obs: c.obs, ativo: !!c.ativo };
+      if (c.id) Object.assign(S.compradores.find(x => x.id === c.id), d); else S.compradores.push({ id: novoId(), criado_em: agora(), ...d }); mudou();
+    },
+    async excluirComprador(id) { rede(); S.compradores = S.compradores.filter(x => x.id !== id); S.lmsgs = (S.lmsgs || []).filter(m => m.comprador_id !== id); (S.lotes || []).forEach(l => { if (l.comprador_id === id) l.comprador_id = null; }); mudou(); },
+    async lotesAdmin() {
+      rede(); if (!ehAdmin()) return [];
+      return (S.lotes || []).slice().sort((a, b) => b.criado_em.localeCompare(a.criado_em)).map(l => ({ ...copia(l), lote_mensagens: (S.lmsgs || []).filter(m => m.lote_id === l.id).map(copia),
+        fin: copia((S.fin || {})[l.id] || null), comprador: copia((S.compradores || []).find(c => c.id === l.comprador_id) || null) }));
+    },
+    async salvarLote(l, fin) {
+      rede(); S.lotes = S.lotes || []; S.fin = S.fin || {};
+      const d = { id: l.id, cat: l.cat, qtd: l.qtd, peso: l.peso, un: l.un, valor: l.valor, descr: l.descr, midias: l.midias, status: l.status, visivel: !!l.visivel, comprador_id: l.comprador_id || null, origem_lanc: l.origem_lanc || null, vendido_em: l.vendido_em || null, atualizado_em: agora() };
+      const x = S.lotes.find(y => y.id === l.id); if (x) Object.assign(x, d); else S.lotes.push({ criado_em: agora(), ...d });
+      S.fin[l.id] = { lote_id: l.id, ...fin }; mudou();
+    },
+    async excluirLote(id) { rede(); S.lotes = S.lotes.filter(l => l.id !== id); S.lmsgs = (S.lmsgs || []).filter(m => m.lote_id !== id); delete (S.fin || {})[id]; mudou(); },
+    async loteLidoAdmin(id) { rede(); (S.lmsgs || []).forEach(m => { if (m.lote_id === id) m.adm_novo = false; }); mudou(); },
     async parceiros() { rede(); return (S.parceiros || []).filter(x => x.ativo || ehAdmin()).map(copia).sort((a, b) => a.nome.localeCompare(b.nome)); },
     async vantagens() { rede(); return (S.vantagens || []).filter(x => x.ativo || ehAdmin()).map(copia); },
     async salvarParceiro(x) {

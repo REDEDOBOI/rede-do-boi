@@ -1,6 +1,6 @@
 // Service worker: guarda o app no aparelho para abrir sem internet.
-const VERSAO = 'rdb-v5';
-const APP = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/api.js', 'js/store.js', 'js/config.js', 'js/instalar.js', 'vendor/supabase.js',
+const VERSAO = 'rdb-v6';
+const APP = ['./', 'index.html', 'comprador.html', 'manifest-comprador.webmanifest', 'css/app.css', 'js/app.js', 'js/api.js', 'js/store.js', 'js/config.js', 'js/instalar.js', 'vendor/supabase.js',
   'manifest.webmanifest', 'icons/logo.jpg', 'icons/icon-64.png', 'icons/icon-192.png', 'icons/sem-foto.svg',
   'fonts/archivo-latin-800-italic.woff2', 'fonts/archivo-latin-800-normal.woff2', 'fonts/archivo-latin-900-italic.woff2',
   'fonts/inter-latin-400-normal.woff2', 'fonts/inter-latin-500-normal.woff2', 'fonts/inter-latin-600-normal.woff2', 'fonts/inter-latin-700-normal.woff2'];
@@ -27,7 +27,7 @@ self.addEventListener('fetch', e => {
   if (url.origin !== location.origin) return; // servidor (dados) vai direto
   // arquivos do app: abre na hora com o que está guardado e atualiza por trás (bom para sinal fraco)
   e.respondWith(caches.open(VERSAO).then(async c => {
-    const chave = req.mode === 'navigate' ? 'index.html' : req;
+    const chave = req.mode === 'navigate' ? (url.pathname.endsWith('comprador.html') ? 'comprador.html' : 'index.html') : req;
     const hit = await c.match(chave, { ignoreSearch: true });
     const rede = fetch(req).then(res => { if (res.ok) c.put(chave, res.clone()); return res; });
     if (hit) { e.waitUntil(rede.catch(() => {})); return hit; }
