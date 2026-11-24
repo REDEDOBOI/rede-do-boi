@@ -139,6 +139,19 @@ function criarSupabase() {
       checar(await sb.storage.from('banners').upload(caminho, blob, { contentType: 'image/jpeg', cacheControl: '31536000' }));
       return caminho;
     },
+    // parceiros e clube de vantagens (se a atualização 2 do banco ainda não rodou, volta vazio)
+    async parceiros() { const r = await sb.from('parceiros').select('*').order('nome'); if (r.error && /relation|does not exist|schema cache/i.test(r.error.message)) return []; return checar(r); },
+    async vantagens() { const r = await sb.from('vantagens').select('*').order('criado_em', { ascending: false }); if (r.error && /relation|does not exist|schema cache/i.test(r.error.message)) return []; return checar(r); },
+    async salvarParceiro(x) {
+      const linha = { nome: x.nome, categoria: x.categoria || null, oferece: x.oferece || null, descr: x.descr || null, fone: x.fone || null, endereco: x.endereco || null, mun: x.mun || null, img: x.img || null, ativo: !!x.ativo };
+      if (x.id) checar(await sb.from('parceiros').update(linha).eq('id', x.id)); else checar(await sb.from('parceiros').insert(linha));
+    },
+    async excluirParceiro(id) { checar(await sb.from('parceiros').delete().eq('id', id)); },
+    async salvarVantagem(x) {
+      const linha = { titulo: x.titulo, desconto: x.desconto || null, descr: x.descr || null, parceiro_id: x.parceiro_id || null, img: x.img || null, ate: x.ate || null, ativo: !!x.ativo };
+      if (x.id) checar(await sb.from('vantagens').update(linha).eq('id', x.id)); else checar(await sb.from('vantagens').insert(linha));
+    },
+    async excluirVantagem(id) { checar(await sb.from('vantagens').delete().eq('id', id)); },
     async marcarInteressesLidos(bannerId) { checar(await sb.from('interesses').update({ novo: false }).eq('banner_id', bannerId).eq('novo', true)); },
     async adicionarVicinal(nome) { checar(await sb.from('vicinais').upsert({ nome }, { onConflict: 'nome', ignoreDuplicates: true })); },
     async removerVicinal(nome) { checar(await sb.from('vicinais').delete().eq('nome', nome)); },
@@ -210,6 +223,14 @@ function criarDemo() {
           descr: 'Compra coletiva de sal mineral para cria e engorda. Quanto mais produtores entrarem, melhor o preço. Retirada no Matupi ou entrega na vicinal.', ate: null, ativo: true, criado_em: atras(5) },
       ],
       interesses: [{ banner_id: 'b1', user_id: 'u2', novo: true, criado_em: atras(1, 16) }],
+      parceiros: [
+        { id: 'p1', nome: 'Agropecuária Campo Forte (exemplo)', categoria: 'Agropecuária', oferece: 'Ração, sal mineral, arame, vacinas', descr: 'Entrega nas vicinais às terças e sextas.', fone: '5597999990001', endereco: 'Av. Principal, 100', mun: 'Apuí', img: null, ativo: true, criado_em: atras(10) },
+        { id: 'p2', nome: 'Clínica Vet Rural (exemplo)', categoria: 'Veterinário', oferece: 'Atendimento na fazenda, exame andrológico, inseminação', descr: '', fone: '5597999990002', endereco: '', mun: 'Manicoré', img: null, ativo: true, criado_em: atras(10) },
+      ],
+      vantagens: [
+        { id: 'v1', titulo: 'Desconto em ração e suplemento', desconto: '10%', descr: 'Mostre o app no caixa. Válido para compras acima de R$ 200.', parceiro_id: 'p1', img: null, ate: null, ativo: true, criado_em: atras(5) },
+        { id: 'v2', titulo: 'Visita técnica com desconto', desconto: '15%', descr: 'Agende pelo WhatsApp e diga que é da Rede do Boi.', parceiro_id: 'p2', img: null, ate: null, ativo: true, criado_em: atras(4) },
+      ],
       arquivos: {},
     };
   }
@@ -320,6 +341,18 @@ function criarDemo() {
       rede(); const url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
       const c = 'b-' + novoId() + '.jpg'; S.arquivos[c] = url; mudou(); return c;
     },
+    async parceiros() { rede(); return (S.parceiros || []).filter(x => x.ativo || ehAdmin()).map(copia).sort((a, b) => a.nome.localeCompare(b.nome)); },
+    async vantagens() { rede(); return (S.vantagens || []).filter(x => x.ativo || ehAdmin()).map(copia); },
+    async salvarParceiro(x) {
+      rede(); S.parceiros = S.parceiros || []; const c = { nome: x.nome, categoria: x.categoria, oferece: x.oferece, descr: x.descr, fone: x.fone, endereco: x.endereco, mun: x.mun, img: x.img, ativo: !!x.ativo };
+      if (x.id) Object.assign(S.parceiros.find(y => y.id === x.id), c); else S.parceiros.push({ id: novoId(), criado_em: agora(), ...c }); mudou();
+    },
+    async excluirParceiro(id) { rede(); S.parceiros = S.parceiros.filter(x => x.id !== id); (S.vantagens || []).forEach(v => { if (v.parceiro_id === id) v.parceiro_id = null; }); mudou(); },
+    async salvarVantagem(x) {
+      rede(); S.vantagens = S.vantagens || []; const c = { titulo: x.titulo, desconto: x.desconto, descr: x.descr, parceiro_id: x.parceiro_id || null, img: x.img, ate: x.ate || null, ativo: !!x.ativo };
+      if (x.id) Object.assign(S.vantagens.find(y => y.id === x.id), c); else S.vantagens.unshift({ id: novoId(), criado_em: agora(), ...c }); mudou();
+    },
+    async excluirVantagem(id) { rede(); S.vantagens = S.vantagens.filter(x => x.id !== id); mudou(); },
     async marcarInteressesLidos(id) { rede(); S.interesses.forEach(i => { if (i.banner_id === id) i.novo = false; }); mudou(); },
     async adicionarVicinal(n) { rede(); if (!S.vicinais.includes(n)) S.vicinais.push(n); mudou(); },
     async removerVicinal(n) { rede(); S.vicinais = S.vicinais.filter(v => v !== n); mudou(); },

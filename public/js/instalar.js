@@ -47,8 +47,9 @@
       <button type="button" class="inst-bt" data-instalar>Instalar</button><button type="button" class="inst-x" aria-label="Agora não">×</button>`;
     faixa.querySelector('.inst-x').onclick = () => { ls.set('rdb-inst-depois', String(Date.now() + 2 * 864e5)); esconderFaixa(); };
     document.body.appendChild(faixa);
+    document.body.classList.add('com-faixa'); // deixa espaço no fim da tela para a faixa não cobrir botões
   }
-  function esconderFaixa() { if (faixa) { faixa.remove(); faixa = null; } }
+  function esconderFaixa() { if (faixa) { faixa.remove(); faixa = null; } document.body.classList.remove('com-faixa'); }
 
   // ---------- painel com o passo a passo ----------
   let painel = null;

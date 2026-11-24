@@ -266,3 +266,19 @@ body.adm .body{max-width:1000px}
 @keyframes inst-aparece{from{opacity:0}to{opacity:1}}
 @keyframes inst-pula{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,8px)}}
 @media (prefers-reduced-motion:reduce){.inst-faixa,.inst-caixa,.inst-fundo,.inst-seta-baixo{animation:none}}
+/* parceiros e vantagens */
+.selo-desc{background:var(--ouro);color:var(--terra);font-family:var(--display);font-weight:800;font-size:13px;border-radius:8px;padding:3px 9px;white-space:nowrap;align-self:flex-start}
+.card-v .capa{width:100%;aspect-ratio:3/1;object-fit:cover;border-radius:10px;max-width:100%}
+.capa-full{width:100%;aspect-ratio:3/1;object-fit:cover;display:block;max-width:100%}
+.parc{display:flex;gap:12px;align-items:flex-start;text-align:left}
+button.item.parc{flex-direction:row}
+.parc-t{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.thumb{width:56px;height:56px;border-radius:12px;object-fit:cover;flex:none;background:#fff;border:1px solid var(--linha)}
+.thumb.ph{display:grid;place-items:center;background:var(--pasto-2);color:#fff;font-family:var(--display);font-weight:800;font-size:24px;border:0}
+.lnk{background:none;border:0;padding:0;color:var(--pasto);font-weight:600;font-size:13px;text-decoration:underline;text-align:left;align-self:flex-start}
+.parc-top .thumb{width:76px;height:76px}
+.parc-top h3{font-size:18px}
+body.com-faixa #app{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+tr.tot td{font-weight:700;background:#eef3ea}
+.grupo{gap:8px}.grupo .tbl{margin-top:2px}
+@media print{.grupo{break-inside:avoid}.chips{display:none!important}}
