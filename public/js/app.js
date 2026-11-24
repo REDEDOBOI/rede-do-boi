@@ -347,6 +347,7 @@ const iconeVoltarAdm = () => ehAdmin() ? `<button class="ghost" data-a="trocarVi
 TELAS.login = () => `<div class="login"><img src="${ICON}" alt="Logo Rede do Boi"><p class="slogan">Negócios e vantagens<br>para o pecuarista.</p>
   <form id="f-login" novalidate><label for="l-fone">Seu telefone / WhatsApp com DDD<input id="l-fone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(97) 99999-9999" required></label>
   <button class="cta green" type="submit">Entrar</button></form>
+  <button class="cta inst-login" type="button" data-instalar>📲 Colocar o app na tela do celular</button>
   <p class="meta" style="text-align:center">Primeira vez? Digite seu telefone e toque em Entrar para fazer o cadastro. Não precisa de senha.</p>
   ${MODO === 'demo' ? '<p class="note"><b>Modo demonstração</b> (sem servidor). Produtor: João (97) 98888-1111. Comprador: Carlos (97) 90000-0009, senha boi123. Ou digite outro número para testar o cadastro.</p>' : ''}
   <p class="meta" style="text-align:center;margin-top:auto">Funciona sem internet depois do primeiro acesso.</p></div>`;

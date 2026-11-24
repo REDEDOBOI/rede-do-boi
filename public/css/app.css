@@ -224,3 +224,45 @@ body.adm .body{max-width:1000px}
   .bar{position:static;background:#fff;color:#000;border-bottom:2px solid #000}
   .tbl{overflow:visible;border:0}table{min-width:0;font-size:9pt}th,td{white-space:normal;padding:4px}
 }
+
+/* instalar na tela do celular */
+.rdb-instalado .inst-login{display:none}
+.inst-faixa{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom));width:calc(100% - 24px);max-width:536px;z-index:20;
+  background:var(--terra);color:#fff;border-radius:16px;padding:10px 10px 10px 12px;display:flex;align-items:center;gap:10px;border-left:5px solid var(--ouro);
+  box-shadow:0 10px 28px rgba(0,0,0,.3);font-family:var(--body);animation:inst-sobe .35s ease-out}
+.inst-faixa img{width:44px;height:44px;border-radius:11px;flex:none}
+.inst-ft{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:12.5px;line-height:1.3}
+.inst-ft b{font-size:14.5px}
+.inst-ft span{opacity:.8}
+.inst-bt{background:var(--ouro);color:var(--terra);border:0;border-radius:12px;padding:12px 14px;font-weight:800;font-size:15px;flex:none}
+.inst-faixa .inst-x{background:transparent;border:0;color:#fff;opacity:.7;font-size:24px;width:34px;height:40px;flex:none;line-height:1}
+.inst-fundo{position:fixed;inset:0;z-index:30;background:rgba(10,30,15,.62);display:flex;align-items:flex-end;justify-content:center;padding:12px;
+  padding-bottom:calc(12px + env(safe-area-inset-bottom));font-family:var(--body);animation:inst-aparece .2s ease-out}
+.inst-caixa{position:relative;background:#fff;color:var(--terra);width:100%;max-width:520px;max-height:calc(100dvh - 110px);overflow-y:auto;border-radius:20px;border-top:6px solid var(--ouro);
+  padding:22px 18px 16px;display:flex;flex-direction:column;align-items:center;gap:12px;animation:inst-sobe .3s ease-out}
+.inst-caixa .inst-x{position:absolute;top:8px;right:8px;background:#eef3ea;border:0;border-radius:50%;width:38px;height:38px;font-size:24px;line-height:1;color:var(--terra)}
+.inst-logo{width:64px;height:64px;border-radius:16px;box-shadow:0 6px 14px rgba(15,77,35,.25)}
+.inst-caixa h2{font-family:var(--display);font-weight:800;font-size:21px;color:var(--pasto);margin:0;text-align:center;text-wrap:balance}
+.inst-txt{margin:0;text-align:center;font-size:15px;line-height:1.4}
+.inst-link{margin:0;font-weight:700;font-size:16px;color:var(--pasto);word-break:break-all;text-align:center}
+.inst-passos{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px;width:100%}
+.inst-passos li{display:flex;gap:12px;align-items:flex-start;font-size:16px;line-height:1.45;background:#f3f7ef;border-radius:14px;padding:12px}
+.inst-passos small{display:block;font-size:13px;color:var(--muted);margin-top:4px}
+.inst-n{flex:none;width:30px;height:30px;border-radius:50%;background:var(--pasto);color:#fff;display:grid;place-items:center;font-weight:800;font-size:16px}
+.inst-ic{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:8px;background:#fff;border:1px solid var(--linha);color:#0a63d6;vertical-align:middle;margin:0 2px}
+.inst-ic svg{width:20px;height:20px}
+.inst-cta{display:block;width:100%;text-align:center;text-decoration:none;background:var(--pasto);color:#fff;border-radius:14px;padding:16px;font-weight:800;font-size:17px}
+.inst-sec{display:block;width:100%;text-align:center;text-decoration:none;background:#fff;border:2px solid var(--pasto);color:var(--pasto);border-radius:14px;padding:12px;font-weight:700;font-size:15px}
+.inst-depois{background:transparent;border:0;color:var(--muted);font-size:14px;padding:8px;text-decoration:underline}
+.inst-seta{position:fixed;left:50%;transform:translateX(-50%);color:#fff;font-weight:800;font-size:15px;text-align:center;display:flex;flex-direction:column;align-items:center;
+  text-shadow:0 2px 6px rgba(0,0,0,.5);pointer-events:none}
+.inst-seta-baixo{bottom:calc(env(safe-area-inset-bottom) - 4px);font-size:15px;line-height:1;animation:inst-pula 1s ease-in-out infinite}
+.inst-seta-c{font-size:34px;line-height:1}
+.inst-seta-cima{top:6px;right:90px;left:auto;transform:none;flex-direction:column-reverse}
+.inst-fundo:has(.inst-seta-baixo){padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+.inst-login{margin-top:2px}
+@keyframes inst-sobe{from{transform:translate(var(--tx,0),30px);opacity:0}to{transform:translate(var(--tx,0),0);opacity:1}}
+.inst-faixa{--tx:-50%}
+@keyframes inst-aparece{from{opacity:0}to{opacity:1}}
+@keyframes inst-pula{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,8px)}}
+@media (prefers-reduced-motion:reduce){.inst-faixa,.inst-caixa,.inst-fundo,.inst-seta-baixo{animation:none}}
