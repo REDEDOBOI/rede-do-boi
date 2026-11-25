@@ -293,3 +293,9 @@ tr.tot td{font-weight:700;background:#eef3ea}
 .descr{margin:0;line-height:1.5;font-size:14px}
 .pos{color:var(--pasto)} .neg{color:var(--alerta)}
 .kv.fin{background:var(--card);border:1px solid var(--linha);border-radius:12px;padding:10px 12px}
+
+/* visor de fotos: botão Fechar fora do entalhe do iPhone e acima de tudo */
+#viewer{z-index:40}
+#viewer .vtop{padding-top:calc(10px + env(safe-area-inset-top,0px));padding-left:calc(14px + env(safe-area-inset-left,0px));padding-right:calc(14px + env(safe-area-inset-right,0px))}
+#viewer .vtop .vx{width:auto;height:40px;border-radius:999px;padding:0 16px;font-size:15px;font-weight:700;background:#fff;color:#0a0f0b}
+#viewer .vhint{padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
