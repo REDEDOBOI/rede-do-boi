@@ -286,15 +286,22 @@ function galeria(l, grande) {
 let visor = { lista: [], i: 0, z: 1 };
 function abrirVisor(lista, i) { visor = { lista, i, z: 1 }; desenharVisor(); history.pushState({ visor: 1 }, ''); }
 function fecharVisor() { visor.lista = []; desenharVisor(); }
+function sairDoVisor() { if (history.state && history.state.visor) history.back(); else fecharVisor(); }
 function desenharVisor() {
   const el = document.getElementById('viewer'), m = visor.lista[visor.i];
   if (!m) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false; const n = visor.lista.length, src = esc(urlMidia(m));
-  el.innerHTML = `<div class="vtop"><span>${visor.i + 1} de ${n}</span><span class="vz">${m.kind === 'video' ? '' : `<button data-z="-1" aria-label="Diminuir">−</button><b>${Math.round(visor.z * 100)}%</b><button data-z="1" aria-label="Ampliar">+</button>`}</span><button class="vx" aria-label="Fechar">✕</button></div>
+  el.innerHTML = `<div class="vtop"><span>${visor.i + 1} de ${n}</span><span class="vz">${m.kind === 'video' ? '' : `<button data-z="-1" aria-label="Diminuir">−</button><b>${Math.round(visor.z * 100)}%</b><button data-z="1" aria-label="Ampliar">+</button>`}</span><button class="vx" aria-label="Fechar foto">✕ Fechar</button></div>
    <div class="vstage" id="vstage">${m.kind === 'video' ? `<video src="${src}" controls autoplay playsinline></video>` : `<img src="${src}" alt="Foto ${visor.i + 1}" style="width:${visor.z * 100}%">`}</div>
    ${n > 1 ? '<button class="vnav vp" aria-label="Anterior">‹</button><button class="vnav vn" aria-label="Próxima">›</button>' : ''}
    <div class="vhint">${m.kind === 'video' ? '' : 'Toque duas vezes na foto ou use + e − para ampliar. Arraste para ver os detalhes.'}</div>`;
-  el.querySelector('.vx').onclick = () => history.back();
+  el.querySelector('.vx').onclick = sairDoVisor;
+  // toque no fundo escuro (fora da foto) ou arrastar para baixo também fecha
+  const st = el.querySelector('.vstage');
+  st.onclick = e => { if (e.target === st) sairDoVisor(); };
+  let y0 = null;
+  st.ontouchstart = e => { y0 = visor.z === 1 && e.touches.length === 1 ? e.touches[0].clientY : null; };
+  st.ontouchend = e => { if (y0 != null && e.changedTouches[0].clientY - y0 > 110) sairDoVisor(); y0 = null; };
   el.querySelectorAll('[data-z]').forEach(b => b.onclick = () => zoom(visor.z + (+b.dataset.z)));
   const p = el.querySelector('.vp'), nx = el.querySelector('.vn');
   if (p) p.onclick = () => { visor.i = (visor.i - 1 + n) % n; visor.z = 1; desenharVisor(); };
@@ -309,7 +316,7 @@ function zoom(z, fx = .5, fy = .5) {
 }
 document.addEventListener('keydown', e => {
   if (!visor.lista.length) return; const n = visor.lista.length;
-  if (e.key === 'Escape') history.back();
+  if (e.key === 'Escape') sairDoVisor();
   else if (e.key === 'ArrowRight') { visor.i = (visor.i + 1) % n; visor.z = 1; desenharVisor(); }
   else if (e.key === 'ArrowLeft') { visor.i = (visor.i - 1 + n) % n; visor.z = 1; desenharVisor(); }
 });
