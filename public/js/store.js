@@ -31,9 +31,11 @@ export const kv = {
   set: (k, v) => tx('kv', 'readwrite', s => s.put(v, k)),
   del: k => tx('kv', 'readwrite', s => s.delete(k)),
 };
+// Fotos e vídeos são guardados como bytes (ArrayBuffer): no iPhone, um Blob guardado direto
+// pode voltar vazio, e o envio falha com "No content provided".
 export const arquivos = {
-  get: k => tx('arquivos', 'readonly', s => s.get(k)),
-  set: (k, blob) => tx('arquivos', 'readwrite', s => s.put(blob, k)),
+  get: async k => { const r = await tx('arquivos', 'readonly', s => s.get(k)); return r && r.buf ? new Blob([r.buf], { type: r.type || '' }) : r; },
+  set: async (k, blob) => { const buf = await blob.arrayBuffer(); return tx('arquivos', 'readwrite', s => s.put({ buf, type: blob.type || '' }, k)); },
   del: k => tx('arquivos', 'readwrite', s => s.delete(k)),
 };
 export const fila = {

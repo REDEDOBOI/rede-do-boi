@@ -91,7 +91,7 @@ function meusLancs() {
 async function subirMidias(lancId, midias, item) {
   for (const m of midias) {
     if (m.path || m.demo) continue;
-    const blob = await arquivos.get(m.id);
+    const blob = await lerMidia(m);
     if (!blob) { m.perdida = true; continue; }
     const ext = m.kind === 'video' ? (m.mime && m.mime.includes('quicktime') ? 'mov' : 'mp4') : 'jpg';
     m.path = await api.enviarArquivo(`${lancId}/${m.id}.${ext}`, blob, m.mime || (m.kind === 'video' ? 'video/mp4' : 'image/jpeg'));
@@ -949,6 +949,9 @@ TELAS.admRevLote = id => {
   </div>`;
 };
 
+// Mostra quanto o valor total dá por @, para ninguém digitar o valor da @ no lugar do total
+const arrobasLote = d => (parseInt(d.qtd, 10) || 0) * arroba({ peso: nv(d.peso) || 0, un: d.un });
+function porArroba(d, v) { const x = nv(v), a = arrobasLote(d); return x && a ? `Isso dá ${brl(x / a)} por @ (lote com ${num(Math.round(a * 10) / 10)} @)` : 'Valor total do lote, não o valor da @'; }
 TELAS.admRevForm = id => {
   const d = rascunho; if (!d) return topo('Lote') + '<div class="empty">Nada para editar.</div>';
   const f = d.fin, sug = total({ qtd: d.qtd, peso: d.peso, un: d.un, valor: d.valor });
@@ -970,9 +973,9 @@ TELAS.admRevForm = id => {
   <div class="two"><label for="rv-st">Status<select id="rv-st">${Object.entries(LST).map(([k, v]) => `<option value="${k}" ${d.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
   <label for="rv-comp">Comprador<select id="rv-comp"><option value="">Nenhum</option>${E.adm.compradores.map(x => `<option value="${x.id}" ${d.comprador_id === x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select></label></div>
   <h2 class="sec">Valores da negociação <span class="opt">(só administradores veem)</span></h2>
-  <label for="rv-pago">Valor pago pelo gado (R$, total do lote)<input id="rv-pago" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.valor_pago ?? '')}"></label>
+  <label for="rv-pago">Valor pago pelo gado (R$, total do lote)<input id="rv-pago" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.valor_pago ?? '')}" placeholder="Ex.: ${Math.round(sug) || 200000}"><span class="meta" id="rv-pago-a">${porArroba(d, f.valor_pago)}</span></label>
   <label for="rv-desp">Despesas (frete, pasto, vacina...) R$ <span class="opt">(opcional)</span><input id="rv-desp" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.despesas ?? '')}"></label>
-  <label for="rv-vend">Valor vendido (R$, total recebido do comprador)<input id="rv-vend" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.valor_vendido ?? '')}"></label>
+  <label for="rv-vend">Valor vendido (R$, total recebido do comprador)<input id="rv-vend" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(f.valor_vendido ?? '')}" placeholder="Ex.: ${Math.round(sug) || 230000}"><span class="meta" id="rv-vend-a">${porArroba(d, f.valor_vendido)}</span></label>
   <button type="button" class="lnk" id="rv-calc">Usar o total pelo valor da @: <span id="rv-sug">${brl0(sug)}</span></button>
   <div class="total"><span>Lucro</span><b class="price" id="rv-lucro">${lucroHtml(contas({ fin: f }).lucro)}</b></div>
   <label for="rv-obs">Anotações <span class="opt">(só administradores veem)</span><textarea id="rv-obs" rows="2" placeholder="Ex.: pagamento em 2 vezes, retirada dia 10">${esc(f.obs)}</textarea></label>
@@ -1100,13 +1103,17 @@ async function salvarLoteRev() {
   if (!d.cat) return aviso('Escolha o tipo de animal.');
   if (!(qtd > 0 && peso > 0 && valor != null && valor >= 0)) return aviso('Preencha quantidade, peso médio e valor da @.');
   if (VENDIDOS.includes(d.status) && !d.comprador_id && !E.adm.compradores.length) return aviso('Cadastre o comprador antes de marcar o lote como vendido.');
+  const a = arrobasLote({ qtd, peso, un: d.un });
+  const pareceArroba = ['valor_pago', 'valor_vendido'].filter(k => { const x = nv(d.fin[k]); return x && a >= 10 && x / a < 20; });
+  if (pareceArroba.length && !d._confirmouArroba) return caixa('Esse valor é o total do lote?', `Os campos de valor pago e valor vendido são o TOTAL do lote. ${pareceArroba.map(k => `${k === 'valor_pago' ? 'Pago' : 'Vendido'}: ${brl(nv(d.fin[k]))} parece o valor da @; o total seria ${brl0(nv(d.fin[k]) * a)}`).join('. ')}. Toque em Converter para usar o total.`, 'Converter e salvar', () => {
+    pareceArroba.forEach(k => { d.fin[k] = Math.round(nv(d.fin[k]) * a * 100) / 100; F(k === 'valor_pago' ? 'rv-pago' : 'rv-vend').value = d.fin[k]; }); d._confirmouArroba = true; salvarLoteRev(); });
   if (!exigeInternet()) return;
   const bt = F('f-rev').querySelector('button[type=submit]'); bt.disabled = true; bt.textContent = 'Salvando...';
   const ok = await tentar(async () => {
     const midias = [];
     for (const m of d.midias) {
       if (!m.path && !m.demo) {
-        const blob = await arquivos.get(m.id); if (!blob) continue;
+        const blob = await lerMidia(m); if (!blob) throw new Error('uma das fotos ou vídeos não pôde ser lida. Toque no × para tirar e adicione de novo.');
         const ext = m.kind === 'video' ? (m.mime && m.mime.includes('quicktime') ? 'mov' : 'mp4') : 'jpg';
         m.path = await api.enviarArquivo(`lotes/${d.id}/${m.id}.${ext}`, blob, m.mime || (m.kind === 'video' ? 'video/mp4' : 'image/jpeg'));
       }
@@ -1196,7 +1203,8 @@ const LIGAR = {
     const conta = () => { guardarRev(); const d = rascunho, t = total({ qtd: d.qtd, peso: d.peso, un: d.un, valor: d.valor });
       F('rv-total').textContent = brl0(t); F('rv-sug').textContent = brl0(t);
       F('rv-conv').textContent = d.peso ? pesoTxt({ peso: d.peso, un: d.un || '@' }) + ' por cabeça' : '1 @ = 30 kg (peso vivo)';
-      F('rv-lucro').innerHTML = lucroHtml(contas({ fin: d.fin }).lucro); };
+      F('rv-lucro').innerHTML = lucroHtml(contas({ fin: d.fin }).lucro);
+      F('rv-pago-a').textContent = porArroba(d, d.fin.valor_pago); F('rv-vend-a').textContent = porArroba(d, d.fin.valor_vendido); };
     ['rv-qtd', 'rv-peso', 'rv-un', 'rv-valor', 'rv-pago', 'rv-desp', 'rv-vend'].forEach(id => F(id).oninput = conta);
     F('rv-un').onchange = conta;
     F('rv-calc').onclick = () => { guardarRev(); const d = rascunho; F('rv-vend').value = Math.round(total({ qtd: d.qtd, peso: d.peso, un: d.un, valor: d.valor }) * 100) / 100; F('rv-vend').dataset.sujo = 1; conta(); };
@@ -1516,16 +1524,25 @@ async function reduzirFoto(file, max = 1600, q = .78) {
     return await new Promise(r => c.toBlob(r, 'image/jpeg', q));
   } catch (e) { console.error(e); return null; }
 }
+// Lê a foto/vídeo guardado (primeiro da memória, depois do aparelho) e confere que não está vazio
+const BLOBS = new Map();
+async function lerMidia(m) {
+  let b = BLOBS.get(m.id) || await arquivos.get(m.id).catch(() => null);
+  if (!b) return null;
+  try { const buf = await b.arrayBuffer(); return buf.byteLength ? new Blob([buf], { type: m.mime || b.type || 'image/jpeg' }) : null; } catch (e) { return null; }
+}
 async function guardarMidia(file) {
   const id = novoId();
   if (file.type.startsWith('video')) {
     if (file.size > VIDEO_MAX_MB * 1024 * 1024) { aviso(`Vídeo muito grande (${Math.round(file.size / 1048576)} MB). Grave um vídeo mais curto, de até 1 minuto.`); return null; }
-    await arquivos.set(id, file); URLS.set(id, URL.createObjectURL(file));
+    let vid; try { vid = new Blob([await file.arrayBuffer()], { type: file.type || 'video/mp4' }); } catch (e) { vid = null; }
+    if (!vid || !vid.size) { aviso('Não consegui abrir esse vídeo. Tente de novo.'); return null; }
+    BLOBS.set(id, vid); await arquivos.set(id, vid).catch(e => console.warn(e)); URLS.set(id, URL.createObjectURL(vid));
     return { id, kind: 'video', mime: file.type || 'video/mp4' };
   }
   const blob = await reduzirFoto(file);
-  if (!blob) { aviso('Não consegui abrir essa foto.'); return null; }
-  await arquivos.set(id, blob); URLS.set(id, URL.createObjectURL(blob));
+  if (!blob || !blob.size) { aviso('Não consegui abrir essa foto.'); return null; }
+  BLOBS.set(id, blob); await arquivos.set(id, blob).catch(e => console.warn(e)); URLS.set(id, URL.createObjectURL(blob));
   return { id, kind: 'img', mime: 'image/jpeg' };
 }
 

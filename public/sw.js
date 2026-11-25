@@ -1,5 +1,5 @@
 // Service worker: guarda o app no aparelho para abrir sem internet.
-const VERSAO = 'rdb-v6';
+const VERSAO = 'rdb-v7';
 const APP = ['./', 'index.html', 'comprador.html', 'manifest-comprador.webmanifest', 'css/app.css', 'js/app.js', 'js/api.js', 'js/store.js', 'js/config.js', 'js/instalar.js', 'vendor/supabase.js',
   'manifest.webmanifest', 'icons/logo.jpg', 'icons/icon-64.png', 'icons/icon-192.png', 'icons/sem-foto.svg',
   'fonts/archivo-latin-800-italic.woff2', 'fonts/archivo-latin-800-normal.woff2', 'fonts/archivo-latin-900-italic.woff2',
@@ -29,7 +29,7 @@ self.addEventListener('fetch', e => {
   e.respondWith(caches.open(VERSAO).then(async c => {
     const chave = req.mode === 'navigate' ? (url.pathname.endsWith('comprador.html') ? 'comprador.html' : 'index.html') : req;
     const hit = await c.match(chave, { ignoreSearch: true });
-    const rede = fetch(req).then(res => { if (res.ok) c.put(chave, res.clone()); return res; });
+    const rede = fetch(req.mode === 'navigate' ? req.url : req, { cache: 'no-cache' }).then(res => { if (res.ok) c.put(chave, res.clone()); return res; });
     if (hit) { e.waitUntil(rede.catch(() => {})); return hit; }
     return rede.catch(() => Response.error());
   }));
